@@ -1,0 +1,22 @@
+defaults:
+  - dataset: uci_energy  # or nyu_depth, vae_mnist
+  - model: mlp           # or unet, resnet
+
+hyperparameters:
+  lr: 1e-3
+  batch_size: 128
+  epochs: 100
+
+uncertainty:
+  loss_type: "beta_nll"
+  beta_strategy: "linear_decay"  # Options: constant, linear_decay, cosine, plateau
+  beta_start: 1.0
+  beta_end: 0.0
+  total_steps: 100000
+
+logging:
+  use_wandb: true
+  project_name: "beta-nll-research"
+  run_name: "${uncertainty.beta_strategy}_${uncertainty.beta_start}_to_${uncertainty.beta_end}"
+
+seed: 42

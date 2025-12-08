@@ -1,0 +1,4 @@
+beta_strategy: linear_decay
+beta_start: 1.0
+beta_end: 0.0
+total_steps: 100000

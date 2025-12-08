@@ -1,0 +1,8 @@
+name: uci_energy
+path: data/uci/energy.csv
+split:
+  train: 0.8
+  val: 0.1
+  test: 0.1
+normalize: true
+target_column: "energy"
