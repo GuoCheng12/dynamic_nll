@@ -2,3 +2,4 @@ name: mlp
 hidden_sizes: [256, 256]
 activation: relu
 dropout: 0.0
+input_dim: 1

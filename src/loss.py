@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -53,11 +55,19 @@ class BetaScheduler:
     Handles beta scheduling strategies for Beta-NLL.
     """
 
-    def __init__(self, strategy: str, start_beta: float, end_beta: float, total_steps: int):
+    def __init__(
+        self,
+        strategy: str,
+        start_beta: float,
+        end_beta: float,
+        total_steps: int,
+        warmup_steps: int = 0,
+    ):
         self.strategy = strategy
         self.start_beta = start_beta
         self.end_beta = end_beta
         self.total_steps = max(total_steps, 1)
+        self.warmup_steps = max(warmup_steps, 0)
         self.best_loss = float("inf")
 
     def get_beta(self, current_step: int, current_loss: float | None = None) -> float:
@@ -66,6 +76,13 @@ class BetaScheduler:
             return self.start_beta
         if self.strategy == "linear_decay":
             progress = min(step / self.total_steps, 1.0)
+            return self.start_beta + progress * (self.end_beta - self.start_beta)
+        if self.strategy == "delayed_linear":
+            if step < self.warmup_steps:
+                return self.start_beta
+            effective = step - self.warmup_steps
+            total = max(self.total_steps - self.warmup_steps, 1)
+            progress = min(effective / total, 1.0)
             return self.start_beta + progress * (self.end_beta - self.start_beta)
         if self.strategy == "cosine":
             progress = min(step / self.total_steps, 1.0)

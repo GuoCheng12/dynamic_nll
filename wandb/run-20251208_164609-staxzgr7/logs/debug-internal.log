@@ -1,0 +1,12 @@
+{"time":"2025-12-08T16:46:09.93806-08:00","level":"INFO","msg":"stream: starting","core version":"0.23.1"}
+{"time":"2025-12-08T16:46:10.141571-08:00","level":"INFO","msg":"stream: created new stream","id":"staxzgr7"}
+{"time":"2025-12-08T16:46:10.141628-08:00","level":"INFO","msg":"handler: started","stream_id":"staxzgr7"}
+{"time":"2025-12-08T16:46:10.141802-08:00","level":"INFO","msg":"stream: started","id":"staxzgr7"}
+{"time":"2025-12-08T16:46:10.141814-08:00","level":"INFO","msg":"sender: started","stream_id":"staxzgr7"}
+{"time":"2025-12-08T16:46:10.142117-08:00","level":"INFO","msg":"writer: started","stream_id":"staxzgr7"}
+{"time":"2025-12-08T16:46:16.843964-08:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-12-08T16:46:17.363369-08:00","level":"INFO","msg":"handler: operation stats","stats":{}}
+{"time":"2025-12-08T16:46:17.366699-08:00","level":"INFO","msg":"stream: closing","id":"staxzgr7"}
+{"time":"2025-12-08T16:46:17.366717-08:00","level":"INFO","msg":"handler: closed","stream_id":"staxzgr7"}
+{"time":"2025-12-08T16:46:17.367341-08:00","level":"INFO","msg":"sender: closed","stream_id":"staxzgr7"}
+{"time":"2025-12-08T16:46:17.367361-08:00","level":"INFO","msg":"stream: closed","id":"staxzgr7"}

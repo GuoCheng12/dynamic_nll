@@ -1,0 +1,25 @@
+Error executing job with overrides: ['uncertainty.beta_strategy=constant', 'uncertainty.beta_start=0.0', 'uncertainty.beta_end=0.0']
+Traceback (most recent call last):
+  File "/Users/wuguocheng/workshop/dynamic_nll/train.py", line 69, in main
+    mean, variance = model(data)
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/Users/wuguocheng/workshop/dynamic_nll/src/models.py", line 29, in forward
+    feats = self.backbone(x)
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/torch/nn/modules/container.py", line 244, in forward
+    input = module(input)
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/torch/nn/modules/linear.py", line 125, in forward
+    return F.linear(input, self.weight, self.bias)
+RuntimeError: mat1 and mat2 shapes cannot be multiplied (128x1 and 10x256)
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.

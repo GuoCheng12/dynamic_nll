@@ -4,18 +4,20 @@ defaults:
 
 hyperparameters:
   lr: 1e-3
+  lr_stage2: 1e-4
   batch_size: 128
   epochs: 100
+  stage1_epochs: 50
 
 uncertainty:
   loss_type: "beta_nll"
   beta_strategy: "linear_decay"  # Options: constant, linear_decay, cosine, plateau
   beta_start: 1.0
   beta_end: 0.0
-  total_steps: 100000
+  total_steps: 80
 
 logging:
-  use_wandb: true
+  use_wandb: false
   project_name: "beta-nll-research"
   run_name: "${uncertainty.beta_strategy}_${uncertainty.beta_start}_to_${uncertainty.beta_end}"
 

@@ -1,0 +1,114 @@
+2025-12-08 16:45:10,051 INFO    MainThread:16307 [wandb_setup.py:_flush():80] Current SDK version is 0.23.1
+2025-12-08 16:45:10,051 INFO    MainThread:16307 [wandb_setup.py:_flush():80] Configure stats pid to 16307
+2025-12-08 16:45:10,051 INFO    MainThread:16307 [wandb_setup.py:_flush():80] Loading settings from /Users/wuguocheng/.config/wandb/settings
+2025-12-08 16:45:10,051 INFO    MainThread:16307 [wandb_setup.py:_flush():80] Loading settings from /Users/wuguocheng/workshop/dynamic_nll/wandb/settings
+2025-12-08 16:45:10,051 INFO    MainThread:16307 [wandb_setup.py:_flush():80] Loading settings from environment variables
+2025-12-08 16:45:10,051 INFO    MainThread:16307 [wandb_init.py:setup_run_log_directory():714] Logging user logs to /Users/wuguocheng/workshop/dynamic_nll/wandb/run-20251208_164510-bh7dun3y/logs/debug.log
+2025-12-08 16:45:10,051 INFO    MainThread:16307 [wandb_init.py:setup_run_log_directory():715] Logging internal logs to /Users/wuguocheng/workshop/dynamic_nll/wandb/run-20251208_164510-bh7dun3y/logs/debug-internal.log
+2025-12-08 16:45:10,051 INFO    MainThread:16307 [wandb_init.py:init():841] calling init triggers
+2025-12-08 16:45:10,051 INFO    MainThread:16307 [wandb_init.py:init():846] wandb.init called with sweep_config: {}
+config: {'dataset': {'name': 'uci_energy', 'path': 'data/uci/energy.csv', 'split': {'train': 0.8, 'val': 0.1, 'test': 0.1}, 'normalize': True, 'target_column': 'energy'}, 'model': {'name': 'mlp', 'hidden_sizes': [256, 256], 'activation': 'relu', 'dropout': 0.0}, 'hyperparameters': {'lr': 0.001, 'batch_size': 128, 'epochs': 100}, 'uncertainty': {'loss_type': 'beta_nll', 'beta_strategy': 'constant', 'beta_start': 0.0, 'beta_end': 0.0, 'total_steps': 100000}, 'logging': {'use_wandb': True, 'project_name': 'beta-nll-research', 'run_name': 'constant_0.0_to_0.0'}, 'seed': 42, '_wandb': {}}
+2025-12-08 16:45:10,051 INFO    MainThread:16307 [wandb_init.py:init():889] starting backend
+2025-12-08 16:45:11,301 INFO    MainThread:16307 [wandb_init.py:init():892] sending inform_init request
+2025-12-08 16:45:11,330 INFO    MainThread:16307 [wandb_init.py:init():900] backend started and connected
+2025-12-08 16:45:11,333 INFO    MainThread:16307 [wandb_init.py:init():970] updated telemetry
+2025-12-08 16:45:11,362 INFO    MainThread:16307 [wandb_init.py:init():994] communicating run to backend with 90.0 second timeout
+2025-12-08 16:45:12,343 INFO    MainThread:16307 [wandb_init.py:init():1041] starting run threads in backend
+2025-12-08 16:45:12,373 INFO    MainThread:16307 [wandb_run.py:_console_start():2521] atexit reg
+2025-12-08 16:45:12,373 INFO    MainThread:16307 [wandb_run.py:_redirect():2369] redirect: wrap_raw
+2025-12-08 16:45:12,373 INFO    MainThread:16307 [wandb_run.py:_redirect():2438] Wrapping output streams.
+2025-12-08 16:45:12,373 INFO    MainThread:16307 [wandb_run.py:_redirect():2461] Redirects installed.
+2025-12-08 16:45:12,375 INFO    MainThread:16307 [wandb_init.py:init():1081] run started, returning control to user process
+2025-12-08 16:45:12,387 INFO    wandb-AsyncioManager-main:16307 [service_client.py:_forward_responses():80] Reached EOF.
+2025-12-08 16:45:12,387 INFO    wandb-AsyncioManager-main:16307 [mailbox.py:close():137] Closing mailbox, abandoning 1 handles.
+2025-12-08 16:45:36,044 ERROR   wandb-AsyncioManager-main:16307 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/Users/wuguocheng/opt/anaconda3/lib/python3.9/asyncio/streams.py", line 387, in drain
+    await self._protocol._drain_helper()
+  File "/Users/wuguocheng/opt/anaconda3/lib/python3.9/asyncio/streams.py", line 190, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-12-08 16:45:36,046 ERROR   wandb-AsyncioManager-main:16307 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/Users/wuguocheng/opt/anaconda3/lib/python3.9/asyncio/streams.py", line 387, in drain
+    await self._protocol._drain_helper()
+  File "/Users/wuguocheng/opt/anaconda3/lib/python3.9/asyncio/streams.py", line 190, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-12-08 16:45:36,051 ERROR   wandb-AsyncioManager-main:16307 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/Users/wuguocheng/opt/anaconda3/lib/python3.9/asyncio/streams.py", line 387, in drain
+    await self._protocol._drain_helper()
+  File "/Users/wuguocheng/opt/anaconda3/lib/python3.9/asyncio/streams.py", line 190, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-12-08 16:45:36,052 ERROR   wandb-AsyncioManager-main:16307 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/Users/wuguocheng/opt/anaconda3/lib/python3.9/asyncio/streams.py", line 387, in drain
+    await self._protocol._drain_helper()
+  File "/Users/wuguocheng/opt/anaconda3/lib/python3.9/asyncio/streams.py", line 190, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-12-08 16:45:36,052 ERROR   wandb-AsyncioManager-main:16307 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/Users/wuguocheng/opt/anaconda3/lib/python3.9/asyncio/streams.py", line 387, in drain
+    await self._protocol._drain_helper()
+  File "/Users/wuguocheng/opt/anaconda3/lib/python3.9/asyncio/streams.py", line 190, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-12-08 16:45:36,052 ERROR   wandb-AsyncioManager-main:16307 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/Users/wuguocheng/opt/anaconda3/lib/python3.9/asyncio/streams.py", line 387, in drain
+    await self._protocol._drain_helper()
+  File "/Users/wuguocheng/opt/anaconda3/lib/python3.9/asyncio/streams.py", line 190, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-12-08 16:45:36,052 ERROR   wandb-AsyncioManager-main:16307 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/Users/wuguocheng/workshop/dynamic_nll/.venv/lib/python3.9/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/Users/wuguocheng/opt/anaconda3/lib/python3.9/asyncio/streams.py", line 387, in drain
+    await self._protocol._drain_helper()
+  File "/Users/wuguocheng/opt/anaconda3/lib/python3.9/asyncio/streams.py", line 190, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost

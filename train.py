@@ -1,15 +1,16 @@
 import math
+import os
 from typing import Any, Dict
 
 import hydra
 import torch
-import torch.nn.functional as F
 from omegaconf import DictConfig, OmegaConf
 
 from src.dataset import build_dataloaders
 from src.loss import BetaScheduler, GaussianLogLikelihoodLoss
 from src.models import MLPRegressor
 from src.utils import grad_norms, mae, nll, rmse, set_seed
+from hydra.core.hydra_config import HydraConfig
 
 try:
     import wandb
@@ -20,7 +21,7 @@ except ImportError:  # pragma: no cover - optional
 def instantiate_model(cfg: DictConfig) -> torch.nn.Module:
     if cfg.model.name == "mlp":
         return MLPRegressor(
-            input_dim=10,
+            input_dim=cfg.model.get("input_dim", 1),
             hidden_sizes=cfg.model.hidden_sizes,
             activation=cfg.model.activation,
             dropout=cfg.model.get("dropout", 0.0),
@@ -42,7 +43,7 @@ def main(cfg: DictConfig) -> None:
     set_seed(cfg.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = instantiate_model(cfg).to(device)
-    train_loader, val_loader, _ = build_dataloaders(cfg.hyperparameters.batch_size)
+    train_loader, val_loader, _ = build_dataloaders(cfg.hyperparameters.batch_size, seed=cfg.seed)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.hyperparameters.lr)
 
     criterion = GaussianLogLikelihoodLoss()
@@ -57,14 +58,31 @@ def main(cfg: DictConfig) -> None:
         wandb.init(project=cfg.logging.project_name, config=OmegaConf.to_container(cfg, resolve=True))
 
     global_step = 0
+    stage1_epochs = cfg.hyperparameters.get("stage1_epochs", 50)
+    stage2_lr = cfg.hyperparameters.get("lr_stage2", cfg.hyperparameters.lr)
+    total_epochs = cfg.hyperparameters.epochs
+    stage2_span = max(total_epochs - stage1_epochs, 1)
     for epoch in range(cfg.hyperparameters.epochs):
         model.train()
+        # Two-phase schedule: phase 1 constant beta/lr, phase 2 beta decay + lr drop
+        if epoch == stage1_epochs:
+            for pg in optimizer.param_groups:
+                pg["lr"] = stage2_lr
+        if cfg.uncertainty.beta_strategy == "linear_decay":
+            if epoch < stage1_epochs:
+                epoch_beta = cfg.uncertainty.beta_start
+            else:
+                progress = min((epoch - stage1_epochs) / stage2_span, 1.0)
+                epoch_beta = cfg.uncertainty.beta_start + progress * (
+                    cfg.uncertainty.beta_end - cfg.uncertainty.beta_start
+                )
+        else:
+            epoch_beta = scheduler.get_beta(epoch)
         for batch in train_loader:
             data, target = batch
             data, target = data.to(device), target.to(device)
 
-            new_beta = scheduler.get_beta(global_step)
-            criterion.beta = new_beta
+            criterion.beta = epoch_beta
 
             mean, variance = model(data)
             loss = criterion(mean, target, variance=variance, interpolate=False)
@@ -77,7 +95,7 @@ def main(cfg: DictConfig) -> None:
             norms = grad_norms(model)
             log_payload: Dict[str, Any] = {
                 "train/loss": loss.item(),
-                "train/beta_value": new_beta,
+                "train/beta_value": epoch_beta,
                 **{f"train/{k}": v for k, v in metrics.items()},
                 **{f"train/{k}": v for k, v in norms.items()},
             }
@@ -104,6 +122,11 @@ def main(cfg: DictConfig) -> None:
 
     if cfg.logging.use_wandb and wandb is not None:
         wandb.finish()
+
+    run_dir = HydraConfig.get().runtime.output_dir
+    ckpt_path = os.path.join(run_dir, "checkpoint.pt")
+    torch.save({"model": model.state_dict()}, ckpt_path)
+    print(f"Saved checkpoint to {ckpt_path}")
 
 
 if __name__ == "__main__":
