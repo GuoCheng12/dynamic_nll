@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.data import build_dataloaders
-from src.utils import evaluate_head_tail, set_seed
+from src.utils import evaluate_head_tail, get_device, set_seed
 from train import instantiate_model
 
 
@@ -27,11 +27,11 @@ def run_training(run_dir: Path, overrides: list[str]) -> None:
     subprocess.run(cmd, check=True, cwd=str(ROOT))
 
 
-def load_model_cfg(run_dir: Path, ckpt_name: str = "checkpoint.pt"):
+def load_model_cfg(run_dir: Path, device: torch.device, ckpt_name: str = "checkpoint.pt"):
     cfg = OmegaConf.load(run_dir / ".hydra" / "config.yaml")
     set_seed(cfg.seed)
-    model = instantiate_model(cfg)
-    state = torch.load(run_dir / ckpt_name, map_location="cpu")
+    model = instantiate_model(cfg).to(device)
+    state = torch.load(run_dir / ckpt_name, map_location=device)
     state_dict = state["model"] if isinstance(state, dict) and "model" in state else state
     model.load_state_dict(state_dict)
     model.eval()
@@ -39,11 +39,12 @@ def load_model_cfg(run_dir: Path, ckpt_name: str = "checkpoint.pt"):
 
 
 def eval_run(run_dir: Path) -> Dict[str, float]:
-    cfg, model = load_model_cfg(run_dir)
+    device = get_device("auto")
+    cfg, model = load_model_cfg(run_dir, device)
     _, _, test_loader = build_dataloaders(cfg.hyperparameters.batch_size, seed=cfg.seed)
     dataset = test_loader.dataset.dataset
     test_indices = torch.tensor(test_loader.dataset.indices)
-    metrics = evaluate_head_tail(model, dataset, indices=test_indices)
+    metrics = evaluate_head_tail(model, dataset, indices=test_indices, device=device)
     return metrics
 
 

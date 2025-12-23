@@ -15,7 +15,7 @@ if str(ROOT) not in sys.path:
 from src.data import PaperSineDataset
 from src.modules import BetaScheduler, GaussianLogLikelihoodLoss
 from src.models import MLPRegressor
-from src.utils import mae, nll, rmse, set_seed, expected_calibration_error
+from src.utils import get_device, mae, nll, rmse, set_seed, expected_calibration_error
 
 
 def make_loaders(n_samples: int, batch_size: int, seed: int = 0):
@@ -260,10 +260,11 @@ def main():
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out_dir", type=str, default="outputs/paper_benchmark")
+    parser.add_argument("--device", type=str, default="auto", help="Device to run on (auto|cpu|cuda).")
     args = parser.parse_args()
 
     set_seed(args.seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device(args.device)
     train_ds, test_ds, train_loader, test_loader = make_loaders(args.n_samples, args.batch_size, seed=args.seed)
 
     experiments = {

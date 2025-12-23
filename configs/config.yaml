@@ -22,3 +22,4 @@ logging:
   run_name: "${uncertainty.beta_strategy}_${uncertainty.beta_start}_to_${uncertainty.beta_end}"
 
 seed: 42
+device: auto

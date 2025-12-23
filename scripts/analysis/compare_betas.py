@@ -14,11 +14,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.data import ToyRegressionDataset  # noqa: E402
-from src.utils import set_seed  # noqa: E402
+from src.utils import get_device, set_seed  # noqa: E402
 from train import instantiate_model  # noqa: E402
 
 
-def load_run(run_dir: Path, ckpt_name: str) -> Tuple[Dict, torch.nn.Module]:
+def load_run(run_dir: Path, ckpt_name: str, device: torch.device) -> Tuple[Dict, torch.nn.Module]:
     cfg_path = run_dir / ".hydra" / "config.yaml"
     ckpt_path = run_dir / ckpt_name
     if not cfg_path.exists():
@@ -28,8 +28,8 @@ def load_run(run_dir: Path, ckpt_name: str) -> Tuple[Dict, torch.nn.Module]:
 
     cfg = OmegaConf.load(cfg_path)
     set_seed(cfg.seed)
-    model = instantiate_model(cfg)
-    state = torch.load(ckpt_path, map_location="cpu")
+    model = instantiate_model(cfg).to(device)
+    state = torch.load(ckpt_path, map_location=device)
     state_dict = state["model"] if isinstance(state, dict) and "model" in state else state
     model.load_state_dict(state_dict)
     model.eval()
@@ -60,9 +60,15 @@ def gather_data(cfg) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Te
     return train_x, test_x, test_y, dataset.y_std, dataset
 
 
-def predict(model: torch.nn.Module, x: torch.Tensor, y_std: torch.Tensor, dataset: ToyRegressionDataset) -> Tuple[torch.Tensor, torch.Tensor]:
+def predict(
+    model: torch.nn.Module,
+    x: torch.Tensor,
+    y_std: torch.Tensor,
+    dataset: ToyRegressionDataset,
+    device: torch.device,
+) -> Tuple[torch.Tensor, torch.Tensor]:
     with torch.no_grad():
-        mean_norm, var_norm = model(x.unsqueeze(-1))
+        mean_norm, var_norm = model(x.unsqueeze(-1).to(device))
     mean_norm = mean_norm.squeeze()
     var_norm = var_norm.squeeze()
     mean = dataset.unnormalize(mean_norm)
@@ -115,6 +121,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--beta1_dir", type=str, default="outputs/beta_1.0", help="Run directory for beta=1.0")
     parser.add_argument("--ckpt", type=str, default="checkpoint.pt", help="Checkpoint filename inside each run dir")
     parser.add_argument("--output", type=str, default="outputs/beta_comparison.png", help="Output plot path")
+    parser.add_argument("--device", type=str, default="auto", help="Device to run on (auto|cpu|cuda).")
     return parser.parse_args()
 
 
@@ -126,14 +133,15 @@ def main() -> None:
         "1.0": Path(args.beta1_dir),
     }
 
-    cfg, _ = load_run(run_dirs["0.0"], args.ckpt)
+    device = get_device(args.device)
+    cfg, _ = load_run(run_dirs["0.0"], args.ckpt, device)
     train_x, test_x, test_y, y_std, dataset = gather_data(cfg)
 
     preds: Dict[str, Dict[str, torch.Tensor]] = {}
     for beta, run_dir in run_dirs.items():
-        cfg_beta, model = load_run(run_dir, args.ckpt)
+        cfg_beta, model = load_run(run_dir, args.ckpt, device)
         set_seed(cfg_beta.seed)
-        mean, var = predict(model, test_x, y_std, dataset)
+        mean, var = predict(model, test_x, y_std, dataset, device)
         preds[beta] = {"mean": mean, "var": var}
 
     plot_comparison(train_x, test_x, test_y, preds, args.output)

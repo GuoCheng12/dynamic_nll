@@ -9,7 +9,7 @@ from omegaconf import DictConfig, OmegaConf
 from src.data import build_dataloaders
 from src.modules import BetaScheduler, GaussianLogLikelihoodLoss
 from src.models import MLPRegressor
-from src.utils import grad_norms, mae, nll, rmse, set_seed
+from src.utils import get_device, grad_norms, mae, nll, rmse, set_seed
 from hydra.core.hydra_config import HydraConfig
 
 try:
@@ -41,7 +41,7 @@ def compute_metrics(mean: torch.Tensor, var: torch.Tensor, target: torch.Tensor)
 @hydra.main(config_path="configs", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     set_seed(cfg.seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device(cfg.get("device", "auto"))
     model = instantiate_model(cfg).to(device)
     train_loader, val_loader, _ = build_dataloaders(cfg.hyperparameters.batch_size, seed=cfg.seed)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.hyperparameters.lr)

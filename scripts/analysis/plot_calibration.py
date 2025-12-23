@@ -13,22 +13,22 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.data import ToyRegressionDataset, build_dataloaders  # noqa: E402
-from src.utils import set_seed  # noqa: E402
+from src.utils import get_device, set_seed  # noqa: E402
 from train import instantiate_model  # noqa: E402
 
 
-def load_model(run_dir: Path, ckpt_name: str = "checkpoint.pt"):
+def load_model(run_dir: Path, device: torch.device, ckpt_name: str = "checkpoint.pt"):
     cfg = OmegaConf.load(run_dir / ".hydra" / "config.yaml")
     set_seed(cfg.seed)
-    model = instantiate_model(cfg)
-    state = torch.load(run_dir / ckpt_name, map_location="cpu")
+    model = instantiate_model(cfg).to(device)
+    state = torch.load(run_dir / ckpt_name, map_location=device)
     state_dict = state["model"] if isinstance(state, dict) and "model" in state else state
     model.load_state_dict(state_dict)
     model.eval()
     return cfg, model
 
 
-def tail_confidence_error(model: torch.nn.Module, cfg, n_bins: int = 10) -> Tuple[np.ndarray, np.ndarray]:
+def tail_confidence_error(model: torch.nn.Module, cfg, device: torch.device, n_bins: int = 10) -> Tuple[np.ndarray, np.ndarray]:
     _, _, test_loader = build_dataloaders(cfg.hyperparameters.batch_size, seed=cfg.seed)
     dataset = test_loader.dataset.dataset
     test_indices = torch.tensor(test_loader.dataset.indices)
@@ -41,13 +41,13 @@ def tail_confidence_error(model: torch.nn.Module, cfg, n_bins: int = 10) -> Tupl
         return np.array([]), np.array([])
 
     with torch.no_grad():
-        mean_norm, var_norm = model(x_tail.unsqueeze(-1))
+        mean_norm, var_norm = model(x_tail.unsqueeze(-1).to(device))
     mean_norm = mean_norm.squeeze()
     var_norm = var_norm.squeeze()
 
-    mean = dataset.unnormalize(mean_norm)
+    mean = dataset.unnormalize(mean_norm.cpu())
     target = dataset.unnormalize(y_norm_tail)
-    var = var_norm * (dataset.y_std ** 2)
+    var = var_norm.cpu() * (dataset.y_std ** 2)
 
     confidence = 1.0 / (var + 1e-8)
     conf_np = confidence.cpu().numpy()
@@ -62,12 +62,12 @@ def tail_confidence_error(model: torch.nn.Module, cfg, n_bins: int = 10) -> Tupl
     return bin_centers, np.array(bin_errors)
 
 
-def plot_calibration(beta1_dir: Path, dynamic_dir: Path, output: str, n_bins: int = 10) -> None:
-    cfg1, model1 = load_model(beta1_dir)
-    cfgd, modeld = load_model(dynamic_dir)
+def plot_calibration(beta1_dir: Path, dynamic_dir: Path, output: str, device: torch.device, n_bins: int = 10) -> None:
+    cfg1, model1 = load_model(beta1_dir, device)
+    cfgd, modeld = load_model(dynamic_dir, device)
 
-    x1, err1 = tail_confidence_error(model1, cfg1, n_bins=n_bins)
-    xd, errd = tail_confidence_error(modeld, cfgd, n_bins=n_bins)
+    x1, err1 = tail_confidence_error(model1, cfg1, device, n_bins=n_bins)
+    xd, errd = tail_confidence_error(modeld, cfgd, device, n_bins=n_bins)
 
     plt.figure(figsize=(8, 5))
     plt.plot(x1, err1, "-o", color="red", label="Beta 1.0")
@@ -87,9 +87,11 @@ def main():
     parser.add_argument("--dynamic_dir", type=str, required=True, help="Run dir for Dynamic_Fix model")
     parser.add_argument("--output", type=str, default="outputs/calibration_tail.png", help="Output plot path")
     parser.add_argument("--bins", type=int, default=10, help="Number of bins")
+    parser.add_argument("--device", type=str, default="auto", help="Device to run on (auto|cpu|cuda).")
     args = parser.parse_args()
 
-    plot_calibration(Path(args.beta1_dir), Path(args.dynamic_dir), args.output, n_bins=args.bins)
+    device = get_device(args.device)
+    plot_calibration(Path(args.beta1_dir), Path(args.dynamic_dir), args.output, device, n_bins=args.bins)
 
 
 if __name__ == "__main__":

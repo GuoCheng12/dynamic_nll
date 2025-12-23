@@ -15,6 +15,12 @@ def set_seed(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
+def get_device(device: str | None = None) -> torch.device:
+    if device and device != "auto":
+        return torch.device(device)
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
 def rmse(pred: torch.Tensor, target: torch.Tensor) -> float:
     return math.sqrt(torch.mean((pred - target) ** 2).item())
 

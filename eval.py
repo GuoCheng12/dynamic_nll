@@ -5,13 +5,13 @@ from omegaconf import DictConfig
 from src.data import build_dataloaders
 from src.modules import GaussianLogLikelihoodLoss
 from src.models import MLPRegressor
-from src.utils import expected_calibration_error, mae, nll, rmse, set_seed
+from src.utils import expected_calibration_error, get_device, mae, nll, rmse, set_seed
 
 
 @hydra.main(config_path="configs", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     set_seed(cfg.seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device(cfg.get("device", "auto"))
     _, _, test_loader = build_dataloaders(cfg.hyperparameters.batch_size, seed=cfg.seed)
 
     model = MLPRegressor(
