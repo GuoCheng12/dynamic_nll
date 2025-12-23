@@ -1,6 +1,6 @@
 defaults:
   - dataset: uci_energy  # or nyu_depth, vae_mnist
-  - model: mlp           # or unet, resnet
+  - model: mlp           # or depth_unet
 
 hyperparameters:
   lr: 1e-3

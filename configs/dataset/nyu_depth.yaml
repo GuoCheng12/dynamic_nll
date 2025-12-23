@@ -1,0 +1,8 @@
+name: nyu_depth
+data_path: /path/to/nyu/rgb
+gt_path: /path/to/nyu/depth
+filenames_file: /path/to/nyu/train_files.txt
+input_height: 256
+input_width: 256
+use_dummy_data: true
+n_samples: 100

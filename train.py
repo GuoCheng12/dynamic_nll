@@ -8,7 +8,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from src.data import build_dataloaders
 from src.modules import BetaScheduler, GaussianLogLikelihoodLoss
-from src.models import MLPRegressor
+from src.models import DepthUNet, MLPRegressor
 from src.utils import get_device, grad_norms, mae, nll, rmse, set_seed
 from hydra.core.hydra_config import HydraConfig
 
@@ -25,6 +25,14 @@ def instantiate_model(cfg: DictConfig) -> torch.nn.Module:
             hidden_sizes=cfg.model.hidden_sizes,
             activation=cfg.model.activation,
             dropout=cfg.model.get("dropout", 0.0),
+        )
+    if cfg.model.name == "depth_unet":
+        return DepthUNet(
+            encoder=cfg.model.encoder,
+            pretrained=cfg.model.pretrained,
+            min_depth=cfg.model.get("min_depth", 1e-3),
+            min_var=cfg.model.get("min_var", 1e-6),
+            max_val=cfg.model.get("max_val", 10.0),
         )
     raise ValueError(f"Unknown model: {cfg.model.name}")
 

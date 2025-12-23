@@ -1,0 +1,6 @@
+name: depth_unet
+encoder: resnet50
+pretrained: true
+min_depth: 0.001
+min_var: 0.000001
+max_val: 10.0
