@@ -21,7 +21,7 @@ from src.data import NYUDepthDataset
 from src.models import DepthUNet
 from src.modules import BetaScheduler, GaussianLogLikelihoodLoss
 from src.utils import get_device, set_seed
-from src.utils.depth_metrics import compute_depth_metrics
+from src.depth_metrics import compute_depth_metrics
 
 
 def make_loader(
