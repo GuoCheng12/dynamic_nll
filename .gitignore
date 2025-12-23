@@ -1,3 +1,5 @@
 wandb/
 .venv/
 outputs/
+AGENTS.md
+.pytest_cache/
