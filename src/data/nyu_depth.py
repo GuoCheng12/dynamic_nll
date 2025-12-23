@@ -30,6 +30,8 @@ class NYUDepthDataset(Dataset):
         mode: str = "train",
         use_dummy_data: bool = False,
         n_samples: int = 100,
+        do_random_rotate: bool = False,
+        degree: float = 2.5,
     ):
         self.data_path = data_path
         self.gt_path = gt_path
@@ -38,6 +40,8 @@ class NYUDepthDataset(Dataset):
         self.mode = mode
         self.use_dummy_data = use_dummy_data
         self.n_samples = n_samples
+        self.do_random_rotate = do_random_rotate
+        self.degree = degree
         self.normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
         if not use_dummy_data:
@@ -65,6 +69,11 @@ class NYUDepthDataset(Dataset):
         image_path, depth_path = self._load_paths(self.lines[idx])
         image = Image.open(image_path).convert("RGB")
         depth = Image.open(depth_path)
+
+        if self.mode == "train" and self.do_random_rotate:
+            angle = (torch.rand(1).item() - 0.5) * 2 * self.degree
+            image = TF.rotate(image, angle, interpolation=TF.InterpolationMode.BILINEAR)
+            depth = TF.rotate(depth, angle, interpolation=TF.InterpolationMode.NEAREST)
 
         image = TF.resize(image, self.input_size, interpolation=TF.InterpolationMode.BILINEAR)
         depth = TF.resize(depth, self.input_size, interpolation=TF.InterpolationMode.NEAREST)

@@ -32,6 +32,9 @@ def make_loader(
     batch_size: int,
     use_dummy_data: bool,
     n_samples: int,
+    do_random_rotate: bool,
+    degree: float,
+    num_workers: int,
     mode: str,
 ):
     ds = NYUDepthDataset(
@@ -42,8 +45,10 @@ def make_loader(
         mode=mode,
         use_dummy_data=use_dummy_data,
         n_samples=n_samples,
+        do_random_rotate=do_random_rotate,
+        degree=degree,
     )
-    return DataLoader(ds, batch_size=batch_size, shuffle=(mode == "train"), num_workers=0, pin_memory=True)
+    return DataLoader(ds, batch_size=batch_size, shuffle=(mode == "train"), num_workers=num_workers, pin_memory=True)
 
 
 def log_samples(images, depth_gt, depth_mean, depth_var, step: int):
@@ -65,6 +70,7 @@ def main(cfg: DictConfig) -> None:
     data_cfg = cfg.dataset
     input_size = (data_cfg.input_height, data_cfg.input_width)
     batch_size = data_cfg.get("batch_size", cfg.hyperparameters.batch_size)
+    num_workers = data_cfg.get("num_workers", 0)
 
     train_loader = make_loader(
         data_cfg.data_path,
@@ -74,17 +80,23 @@ def main(cfg: DictConfig) -> None:
         batch_size,
         data_cfg.use_dummy_data,
         data_cfg.n_samples,
+        data_cfg.get("do_random_rotate", False),
+        data_cfg.get("degree", 2.5),
+        num_workers,
         mode="train",
     )
-    val_file = data_cfg.get("val_filenames_file", "") or data_cfg.filenames_file
+    val_file = data_cfg.get("filenames_file_eval", "") or data_cfg.filenames_file
     val_loader = make_loader(
-        data_cfg.data_path,
-        data_cfg.gt_path,
+        data_cfg.get("data_path_eval", data_cfg.data_path),
+        data_cfg.get("gt_path_eval", data_cfg.gt_path),
         val_file,
         input_size,
         batch_size,
         data_cfg.use_dummy_data,
         data_cfg.n_samples,
+        False,
+        data_cfg.get("degree", 2.5),
+        num_workers,
         mode="val",
     )
 
