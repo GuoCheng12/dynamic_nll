@@ -10,7 +10,8 @@ Modular PyTorch research framework to study dynamic β scheduling for heterosced
 
 ## Key Files
 - `configs/` Hydra configs (datasets, models, experiments)
-- `src/loss.py` GaussianLogLikelihoodLoss (do not change math) and BetaScheduler
-- `src/models.py` backbones outputting mean and log_variance
+- `src/modules/loss.py` GaussianLogLikelihoodLoss (do not change math) and BetaScheduler
+- `src/models/mlp.py` backbones outputting mean and log_variance
+- `src/data/base_dataset.py` toy long-tail dataset and loaders
 - `train.py` dynamic β training loop with logging and grad norms
 - `eval.py` calibration and NLL evaluation

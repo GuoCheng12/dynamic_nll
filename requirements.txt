@@ -1,0 +1,6 @@
+hydra-core
+omegaconf
+torch
+numpy
+matplotlib
+wandb

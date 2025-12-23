@@ -2,8 +2,8 @@ import hydra
 import torch
 from omegaconf import DictConfig
 
-from src.dataset import build_dataloaders
-from src.loss import GaussianLogLikelihoodLoss
+from src.data import build_dataloaders
+from src.modules import GaussianLogLikelihoodLoss
 from src.models import MLPRegressor
 from src.utils import expected_calibration_error, mae, nll, rmse, set_seed
 
@@ -12,10 +12,10 @@ from src.utils import expected_calibration_error, mae, nll, rmse, set_seed
 def main(cfg: DictConfig) -> None:
     set_seed(cfg.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    _, _, test_loader = build_dataloaders(cfg.hyperparameters.batch_size)
+    _, _, test_loader = build_dataloaders(cfg.hyperparameters.batch_size, seed=cfg.seed)
 
     model = MLPRegressor(
-        input_dim=10,
+        input_dim=cfg.model.get("input_dim", 1),
         hidden_sizes=cfg.model.hidden_sizes,
         activation=cfg.model.activation,
         dropout=cfg.model.get("dropout", 0.0),

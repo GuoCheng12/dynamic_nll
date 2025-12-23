@@ -6,8 +6,8 @@ import hydra
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from src.dataset import build_dataloaders
-from src.loss import BetaScheduler, GaussianLogLikelihoodLoss
+from src.data import build_dataloaders
+from src.modules import BetaScheduler, GaussianLogLikelihoodLoss
 from src.models import MLPRegressor
 from src.utils import grad_norms, mae, nll, rmse, set_seed
 from hydra.core.hydra_config import HydraConfig
