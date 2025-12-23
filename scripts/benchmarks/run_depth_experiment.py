@@ -1,11 +1,11 @@
-import argparse
 import os
 import sys
 from pathlib import Path
 from typing import Dict
 
+import hydra
 import torch
-import torch.nn.functional as F
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
 try:
@@ -57,72 +57,63 @@ def log_samples(images, depth_gt, depth_mean, depth_var, step: int):
     wandb.log({"samples": wandb.Image(grid, caption="Input | GT | Pred Mean | Pred Var")}, step=step)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Depth estimation experiment with dynamic beta.")
-    parser.add_argument("--data_path", type=str, default="/path/to/nyu/rgb")
-    parser.add_argument("--gt_path", type=str, default="/path/to/nyu/depth")
-    parser.add_argument("--filenames_file", type=str, default="/path/to/nyu/train_files.txt")
-    parser.add_argument("--val_filenames_file", type=str, default="")
-    parser.add_argument("--input_height", type=int, default=256)
-    parser.add_argument("--input_width", type=int, default=256)
-    parser.add_argument("--batch_size", type=int, default=8)
-    parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--warmup_epochs", type=int, default=5)
-    parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--lr_stage2", type=float, default=1e-5)
-    parser.add_argument("--use_dummy_data", action="store_true")
-    parser.add_argument("--n_samples", type=int, default=100)
-    parser.add_argument("--device", type=str, default="auto")
-    parser.add_argument("--use_wandb", action="store_true")
-    parser.add_argument("--wandb_project", type=str, default="beta-nll-depth")
-    args = parser.parse_args()
+@hydra.main(config_path=str(ROOT / "configs"), config_name="config", version_base=None)
+def main(cfg: DictConfig) -> None:
+    set_seed(cfg.seed)
+    device = get_device(cfg.get("device", "auto"))
 
-    set_seed(42)
-    device = get_device(args.device)
+    data_cfg = cfg.dataset
+    input_size = (data_cfg.input_height, data_cfg.input_width)
+    batch_size = data_cfg.get("batch_size", cfg.hyperparameters.batch_size)
 
-    input_size = (args.input_height, args.input_width)
     train_loader = make_loader(
-        args.data_path,
-        args.gt_path,
-        args.filenames_file,
+        data_cfg.data_path,
+        data_cfg.gt_path,
+        data_cfg.filenames_file,
         input_size,
-        args.batch_size,
-        args.use_dummy_data,
-        args.n_samples,
+        batch_size,
+        data_cfg.use_dummy_data,
+        data_cfg.n_samples,
         mode="train",
     )
-    val_file = args.val_filenames_file or args.filenames_file
+    val_file = data_cfg.get("val_filenames_file", "") or data_cfg.filenames_file
     val_loader = make_loader(
-        args.data_path,
-        args.gt_path,
+        data_cfg.data_path,
+        data_cfg.gt_path,
         val_file,
         input_size,
-        args.batch_size,
-        args.use_dummy_data,
-        args.n_samples,
+        batch_size,
+        data_cfg.use_dummy_data,
+        data_cfg.n_samples,
         mode="val",
     )
 
-    model = DepthUNet(encoder="resnet50", pretrained=True).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    model = DepthUNet(
+        encoder=cfg.model.encoder,
+        pretrained=cfg.model.pretrained,
+        min_depth=cfg.model.get("min_depth", 1e-3),
+        min_var=cfg.model.get("min_var", 1e-6),
+        max_val=cfg.model.get("max_val", 10.0),
+    ).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.hyperparameters.lr)
     criterion = GaussianLogLikelihoodLoss()
     scheduler = BetaScheduler(
         strategy="delayed_linear",
         start_beta=1.0,
         end_beta=0.5,
-        total_steps=args.epochs,
-        warmup_steps=args.warmup_epochs,
+        total_steps=cfg.hyperparameters.epochs,
+        warmup_steps=cfg.hyperparameters.stage1_epochs,
     )
 
-    if args.use_wandb and wandb is not None:
-        wandb.init(project=args.wandb_project, config=vars(args))
+    if cfg.logging.use_wandb and wandb is not None:
+        wandb.init(project=cfg.logging.project_name, config=OmegaConf.to_container(cfg, resolve=True))
 
     global_step = 0
-    for epoch in range(args.epochs):
+    for epoch in range(cfg.hyperparameters.epochs):
         model.train()
-        if epoch == args.warmup_epochs:
+        if epoch == cfg.hyperparameters.stage1_epochs:
             for pg in optimizer.param_groups:
-                pg["lr"] = args.lr_stage2
+                pg["lr"] = cfg.hyperparameters.lr_stage2
         beta_value = scheduler.get_beta(epoch)
         for images, depth_gt in train_loader:
             images = images.to(device)
@@ -135,7 +126,7 @@ def main():
             optimizer.step()
 
             metrics = compute_depth_metrics(mean, depth_gt)
-            if args.use_wandb and wandb is not None:
+            if cfg.logging.use_wandb and wandb is not None:
                 wandb.log(
                     {
                         "train/loss": loss.item(),
@@ -166,10 +157,10 @@ def main():
         for k in val_metrics:
             val_metrics[k] /= max(count, 1)
 
-        if args.use_wandb and wandb is not None:
+        if cfg.logging.use_wandb and wandb is not None:
             wandb.log({f"val/{k}": v for k, v in val_metrics.items()}, step=global_step)
 
-    if args.use_wandb and wandb is not None:
+    if cfg.logging.use_wandb and wandb is not None:
         wandb.finish()
 
 
