@@ -140,7 +140,19 @@ def main(cfg: DictConfig) -> None:
 
             if rank == 0:
                 if cfg.dataset.name == "nyu_depth":
-                    depth_metrics = compute_depth_metrics(mean.detach(), target.detach())
+                    mean_metrics = mean.detach()
+                    if mean_metrics.shape[-2:] != target.shape[-2:]:
+                        mean_metrics = torch.nn.functional.interpolate(
+                            mean_metrics, size=target.shape[-2:], mode="bilinear", align_corners=True
+                        )
+                    depth_metrics = compute_depth_metrics(
+                        mean_metrics,
+                        target.detach(),
+                        min_depth=cfg.dataset.get("min_depth", 1e-3),
+                        max_depth=cfg.dataset.get("max_depth", 10.0),
+                        use_eigen_crop=cfg.dataset.get("eigen_crop", False),
+                        dataset=cfg.dataset.name,
+                    )
                     log_payload: Dict[str, Any] = {
                         "train/loss": loss.item(),
                         "train/beta": epoch_beta,
@@ -180,7 +192,19 @@ def main(cfg: DictConfig) -> None:
                 val_loss_accum += val_loss.item() * batch_size
                 count += batch_size
                 if cfg.dataset.name == "nyu_depth":
-                    batch_metrics = compute_depth_metrics(mean, target)
+                    mean_metrics = mean
+                    if mean_metrics.shape[-2:] != target.shape[-2:]:
+                        mean_metrics = torch.nn.functional.interpolate(
+                            mean_metrics, size=target.shape[-2:], mode="bilinear", align_corners=True
+                        )
+                    batch_metrics = compute_depth_metrics(
+                        mean_metrics,
+                        target,
+                        min_depth=cfg.dataset.get("min_depth_eval", cfg.dataset.get("min_depth", 1e-3)),
+                        max_depth=cfg.dataset.get("max_depth_eval", cfg.dataset.get("max_depth", 10.0)),
+                        use_eigen_crop=cfg.dataset.get("eigen_crop", False),
+                        dataset=cfg.dataset.name,
+                    )
                     for k in depth_sums:
                         depth_sums[k] += batch_metrics[k] * batch_size
         if distributed:
