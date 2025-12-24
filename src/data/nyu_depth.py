@@ -7,7 +7,8 @@ from typing import List, Tuple
 import numpy as np
 import torch
 from PIL import Image
-from torch.utils.data import Dataset
+from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
 
 try:
     from torchvision import transforms
@@ -130,3 +131,76 @@ class NYUDepthDataset(Dataset):
         depth_tensor = torch.from_numpy(depth_np).unsqueeze(0)
 
         return image, depth_tensor
+
+
+def build_nyu_dataloaders(
+    data_cfg,
+    distributed: bool = False,
+    rank: int = 0,
+    world_size: int = 1,
+):
+    input_size = (data_cfg.input_height, data_cfg.input_width)
+    batch_size = data_cfg.get("batch_size", 1)
+    num_workers = data_cfg.get("num_workers", 0)
+
+    train_ds = NYUDepthDataset(
+        data_path=data_cfg.train_data_path,
+        gt_path=data_cfg.train_gt_path,
+        filenames_file=data_cfg.filenames_file,
+        input_size=input_size,
+        mode="train",
+        use_dummy_data=data_cfg.use_dummy_data,
+        n_samples=data_cfg.n_samples,
+        do_random_rotate=data_cfg.get("do_random_rotate", False),
+        degree=data_cfg.get("degree", 2.5),
+        eigen_crop=data_cfg.get("eigen_crop", False),
+        min_depth=data_cfg.get("min_depth", 1e-3),
+        max_depth=data_cfg.get("max_depth", 10.0),
+        min_depth_eval=data_cfg.get("min_depth_eval", 1e-3),
+        max_depth_eval=data_cfg.get("max_depth_eval", 10.0),
+    )
+    eval_ds = NYUDepthDataset(
+        data_path=data_cfg.eval_data_path,
+        gt_path=data_cfg.eval_gt_path,
+        filenames_file=data_cfg.get("filenames_file_eval", data_cfg.filenames_file),
+        input_size=input_size,
+        mode="val",
+        use_dummy_data=data_cfg.use_dummy_data,
+        n_samples=data_cfg.n_samples,
+        do_random_rotate=False,
+        degree=data_cfg.get("degree", 2.5),
+        eigen_crop=data_cfg.get("eigen_crop", False),
+        min_depth=data_cfg.get("min_depth", 1e-3),
+        max_depth=data_cfg.get("max_depth", 10.0),
+        min_depth_eval=data_cfg.get("min_depth_eval", 1e-3),
+        max_depth_eval=data_cfg.get("max_depth_eval", 10.0),
+    )
+
+    train_sampler = (
+        DistributedSampler(train_ds, num_replicas=world_size, rank=rank, shuffle=True)
+        if distributed
+        else None
+    )
+    eval_sampler = (
+        DistributedSampler(eval_ds, num_replicas=world_size, rank=rank, shuffle=False)
+        if distributed
+        else None
+    )
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
+        num_workers=num_workers,
+        pin_memory=True,
+    )
+    eval_loader = DataLoader(
+        eval_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        sampler=eval_sampler,
+        num_workers=num_workers,
+        pin_memory=True,
+    )
+    return train_loader, eval_loader, train_sampler, eval_sampler

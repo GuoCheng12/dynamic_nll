@@ -4,6 +4,7 @@ from typing import Tuple
 
 import torch
 from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data.distributed import DistributedSampler
 
 
 class ToyRegressionDataset(Dataset):
@@ -46,7 +47,14 @@ class ToyRegressionDataset(Dataset):
         return y_pred * self.y_std + self.y_mean
 
 
-def build_dataloaders(batch_size: int, splits=(0.8, 0.1, 0.1), seed: int | None = None):
+def build_dataloaders(
+    batch_size: int,
+    splits=(0.8, 0.1, 0.1),
+    seed: int | None = None,
+    distributed: bool = False,
+    rank: int = 0,
+    world_size: int = 1,
+):
     dataset = ToyRegressionDataset()
     n = len(dataset)
     train_len = int(splits[0] * n)
@@ -56,7 +64,28 @@ def build_dataloaders(batch_size: int, splits=(0.8, 0.1, 0.1), seed: int | None 
     if seed is not None:
         generator.manual_seed(seed)
     train_ds, val_ds, test_ds = random_split(dataset, [train_len, val_len, test_len], generator=generator)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, generator=generator)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, generator=generator)
-    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, generator=generator)
+    train_sampler = (
+        DistributedSampler(train_ds, num_replicas=world_size, rank=rank, shuffle=True)
+        if distributed
+        else None
+    )
+    val_sampler = (
+        DistributedSampler(val_ds, num_replicas=world_size, rank=rank, shuffle=False)
+        if distributed
+        else None
+    )
+    test_sampler = (
+        DistributedSampler(test_ds, num_replicas=world_size, rank=rank, shuffle=False)
+        if distributed
+        else None
+    )
+    train_loader = DataLoader(
+        train_ds, batch_size=batch_size, shuffle=(train_sampler is None), sampler=train_sampler, generator=generator
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=batch_size, shuffle=False, sampler=val_sampler, generator=generator
+    )
+    test_loader = DataLoader(
+        test_ds, batch_size=batch_size, shuffle=False, sampler=test_sampler, generator=generator
+    )
     return train_loader, val_loader, test_loader
