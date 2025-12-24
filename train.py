@@ -5,6 +5,7 @@ from typing import Any, Dict
 import hydra
 import torch
 from omegaconf import DictConfig, OmegaConf
+from tqdm import tqdm
 
 from src.data import build_dataloaders
 from src.modules import BetaScheduler, GaussianLogLikelihoodLoss
@@ -86,7 +87,7 @@ def main(cfg: DictConfig) -> None:
                 )
         else:
             epoch_beta = scheduler.get_beta(epoch)
-        for batch in train_loader:
+        for batch in tqdm(train_loader, desc=f"Epoch {epoch+1}/{cfg.hyperparameters.epochs}", leave=False):
             data, target = batch
             data, target = data.to(device), target.to(device)
 

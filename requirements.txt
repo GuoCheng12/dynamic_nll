@@ -4,3 +4,4 @@ torch
 numpy
 matplotlib
 wandb
+tqdm

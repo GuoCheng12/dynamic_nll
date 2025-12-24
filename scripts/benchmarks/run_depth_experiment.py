@@ -7,6 +7,7 @@ import hydra
 import torch
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 try:
     import wandb
@@ -152,7 +153,7 @@ def main(cfg: DictConfig) -> None:
             for pg in optimizer.param_groups:
                 pg["lr"] = cfg.hyperparameters.lr_stage2
         beta_value = scheduler.get_beta(epoch)
-        for images, depth_gt in train_loader:
+        for images, depth_gt in tqdm(train_loader, desc=f"Epoch {epoch+1}/{cfg.hyperparameters.epochs}", leave=False):
             images = images.to(device)
             depth_gt = depth_gt.to(device)
             mean, var = model(images)
@@ -183,7 +184,7 @@ def main(cfg: DictConfig) -> None:
         val_metrics: Dict[str, float] = {}
         count = 0
         with torch.no_grad():
-            for images, depth_gt in val_loader:
+            for images, depth_gt in tqdm(val_loader, desc="Val", leave=False):
                 images = images.to(device)
                 depth_gt = depth_gt.to(device)
                 mean, var = model(images)
