@@ -47,13 +47,15 @@ class DecoderBN(nn.Module):
         self.conv3 = nn.Conv2d(features // 16, num_classes, kernel_size=3, stride=1, padding=1)
 
     def forward(self, features):
-        x_block0, x_block1, x_block2, x_block3, x_block4 = (
-            features[4],
-            features[5],
-            features[6],
-            features[8],
-            features[11],
-        )
+        # [CRITICAL FIX] Adjusted indices for timm EfficientNet-B5
+        # Original Author (gen-efficientnet): [4, 5, 6, 8, 11]
+        # Current (timm): All shifted by -1 because timm merges activation layers differently
+        
+        x_block0 = features[3]   # Block 0 (24 ch)  <-- Was 4
+        x_block1 = features[4]   # Block 1 (40 ch)  <-- Was 5
+        x_block2 = features[5]   # Block 2 (64 ch)  <-- Was 6
+        x_block3 = features[7]   # Block 4 (176 ch) <-- Was 8 (This caused the 2352 vs 2224 bug)
+        x_block4 = features[10]  # Conv Head (2048 ch) <-- Was 11
 
         x_d0 = self.conv2(x_block4)
         x_d1 = self.up1(x_d0, x_block3)
