@@ -130,7 +130,6 @@ def main(cfg: DictConfig) -> None:
         encoder=cfg.model.encoder,
         pretrained=cfg.model.pretrained,
         min_depth=cfg.model.get("min_depth", 1e-3),
-        min_var=cfg.model.get("min_var", 1e-6),
         max_val=cfg.model.get("max_val", 10.0),
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.hyperparameters.lr)
@@ -161,13 +160,20 @@ def main(cfg: DictConfig) -> None:
             images = images.to(device)
             depth_gt = depth_gt.to(device)
             mean, var = model(images)
-            loss = criterion(mean, depth_gt, variance=var, interpolate=True)
+            mask = depth_gt > cfg.dataset.get("min_depth", 1e-3)
+            loss = criterion(mean, depth_gt, variance=var, interpolate=False, mask=mask)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-            metrics = compute_depth_metrics(mean, depth_gt)
+            metrics = compute_depth_metrics(
+                mean,
+                depth_gt,
+                min_depth=cfg.dataset.get("min_depth", 1e-3),
+                max_depth=cfg.dataset.get("max_depth", 10.0),
+                use_eigen_crop=False,
+            )
             if cfg.logging.use_wandb and wandb is not None:
                 wandb.log(
                     {
@@ -192,7 +198,21 @@ def main(cfg: DictConfig) -> None:
                 images = images.to(device)
                 depth_gt = depth_gt.to(device)
                 mean, var = model(images)
-                batch_metrics = compute_depth_metrics(mean, depth_gt)
+                mean_metrics = mean
+                if mean_metrics.shape[-2:] != depth_gt.shape[-2:]:
+                    mean_metrics = torch.nn.functional.interpolate(
+                        mean_metrics, size=depth_gt.shape[-2:], mode="bilinear", align_corners=True
+                    )
+                target_metrics = depth_gt
+                if target_metrics.max().item() > 80.0:
+                    target_metrics = target_metrics / 1000.0
+                batch_metrics = compute_depth_metrics(
+                    mean_metrics,
+                    target_metrics,
+                    min_depth=cfg.dataset.get("min_depth_eval", cfg.dataset.get("min_depth", 1e-3)),
+                    max_depth=cfg.dataset.get("max_depth_eval", cfg.dataset.get("max_depth", 10.0)),
+                    use_eigen_crop=True,
+                )
                 for k, v in batch_metrics.items():
                     val_metrics[k] = val_metrics.get(k, 0.0) + v * len(images)
                 count += len(images)

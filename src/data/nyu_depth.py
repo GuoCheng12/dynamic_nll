@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+import random
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 import numpy as np
 import torch
@@ -35,6 +36,7 @@ class NYUDepthDataset(Dataset):
         do_random_rotate: bool = False,
         degree: float = 2.5,
         eigen_crop: bool = False,
+        train_crop: Optional[bool] = None,
         min_depth: float = 1e-3,
         max_depth: float = 10.0,
         min_depth_eval: float = 1e-3,
@@ -50,6 +52,7 @@ class NYUDepthDataset(Dataset):
         self.do_random_rotate = do_random_rotate
         self.degree = degree
         self.eigen_crop = eigen_crop
+        self.train_crop = eigen_crop if train_crop is None else train_crop
         self.min_depth = min_depth
         self.max_depth = max_depth
         self.min_depth_eval = min_depth_eval
@@ -106,31 +109,41 @@ class NYUDepthDataset(Dataset):
         image = Image.open(image_path).convert("RGB")
         depth = Image.open(depth_path)
 
-        if self.mode == "train" and self.do_random_rotate:
-            angle = (torch.rand(1).item() - 0.5) * 2 * self.degree
-            image = TF.rotate(image, angle, interpolation=TF.InterpolationMode.BILINEAR)
-            depth = TF.rotate(depth, angle, interpolation=TF.InterpolationMode.NEAREST)
+        if self.mode == "train":
+            if self.train_crop:
+                # NYUv2 boundary crop to remove invalid edges (training only).
+                image = image.crop((43, 45, 608, 472))
+                depth = depth.crop((43, 45, 608, 472))
 
-        if self.eigen_crop:
-            # NYUv2 eigen crop: (43, 45, 608, 472) on the original image
-            image = image.crop((43, 45, 608, 472))
-            depth = depth.crop((43, 45, 608, 472))
+            if self.do_random_rotate:
+                angle = (torch.rand(1).item() - 0.5) * 2 * self.degree
+                image = TF.rotate(image, angle, interpolation=TF.InterpolationMode.BILINEAR)
+                depth = TF.rotate(depth, angle, interpolation=TF.InterpolationMode.NEAREST)
 
-        image = TF.resize(image, self.input_size, interpolation=TF.InterpolationMode.BILINEAR)
-        depth = TF.resize(depth, self.input_size, interpolation=TF.InterpolationMode.NEAREST)
+            image, depth = self._random_crop(image, depth, self.input_size)
 
         image = TF.to_tensor(image)
         image = self.normalize(image)
 
         depth_np = np.asarray(depth, dtype=np.float32)
         depth_np = depth_np / 1000.0
-        if self.mode == "train":
-            depth_np = np.clip(depth_np, self.min_depth, self.max_depth)
-        else:
-            depth_np = np.clip(depth_np, self.min_depth_eval, self.max_depth_eval)
         depth_tensor = torch.from_numpy(depth_np).unsqueeze(0)
 
         return image, depth_tensor
+
+    @staticmethod
+    def _random_crop(image: Image.Image, depth: Image.Image, size: Tuple[int, int]):
+        crop_h, crop_w = size
+        width, height = image.size
+        if height < crop_h or width < crop_w:
+            image = TF.resize(image, size, interpolation=TF.InterpolationMode.BILINEAR)
+            depth = TF.resize(depth, size, interpolation=TF.InterpolationMode.NEAREST)
+            return image, depth
+        top = random.randint(0, height - crop_h)
+        left = random.randint(0, width - crop_w)
+        image = TF.crop(image, top, left, crop_h, crop_w)
+        depth = TF.crop(depth, top, left, crop_h, crop_w)
+        return image, depth
 
 
 def build_nyu_dataloaders(
@@ -154,6 +167,7 @@ def build_nyu_dataloaders(
         do_random_rotate=data_cfg.get("do_random_rotate", False),
         degree=data_cfg.get("degree", 2.5),
         eigen_crop=data_cfg.get("eigen_crop", False),
+        train_crop=data_cfg.get("train_crop", None),
         min_depth=data_cfg.get("min_depth", 1e-3),
         max_depth=data_cfg.get("max_depth", 10.0),
         min_depth_eval=data_cfg.get("min_depth_eval", 1e-3),
@@ -170,6 +184,7 @@ def build_nyu_dataloaders(
         do_random_rotate=False,
         degree=data_cfg.get("degree", 2.5),
         eigen_crop=data_cfg.get("eigen_crop", False),
+        train_crop=data_cfg.get("train_crop", None),
         min_depth=data_cfg.get("min_depth", 1e-3),
         max_depth=data_cfg.get("max_depth", 10.0),
         min_depth_eval=data_cfg.get("min_depth_eval", 1e-3),

@@ -133,7 +133,11 @@ def main(cfg: DictConfig) -> None:
             criterion.beta = epoch_beta
 
             mean, variance = model(data)
-            loss = criterion(mean, target, variance=variance, interpolate=False)
+            if cfg.dataset.name == "nyu_depth":
+                mask = target > cfg.dataset.get("min_depth", 1e-3)
+                loss = criterion(mean, target, variance=variance, interpolate=False, mask=mask)
+            else:
+                loss = criterion(mean, target, variance=variance, interpolate=False)
 
             optimizer.zero_grad()
             loss.backward()
@@ -187,19 +191,21 @@ def main(cfg: DictConfig) -> None:
             for data, target in val_iter:
                 data, target = data.to(device), target.to(device)
                 mean, variance = model(data)
-                val_loss = criterion(mean, target, variance=variance, interpolate=False)
+                if cfg.dataset.name == "nyu_depth":
+                    mask = target > cfg.dataset.get("min_depth_eval", cfg.dataset.get("min_depth", 1e-3))
+                    val_loss = criterion(mean, target, variance=variance, interpolate=False, mask=mask)
+                else:
+                    val_loss = criterion(mean, target, variance=variance, interpolate=False)
                 batch_size = len(data)
                 val_loss_accum += val_loss.item() * batch_size
                 count += batch_size
                 if cfg.dataset.name == "nyu_depth":
                     mean_metrics = mean
                     target_metrics = target
-                    if mean_metrics.shape[-2:] != (480, 640):
+                    if mean_metrics.shape[-2:] != target_metrics.shape[-2:]:
                         mean_metrics = F.interpolate(
-                            mean_metrics, size=(480, 640), mode="bilinear", align_corners=True
+                            mean_metrics, size=target_metrics.shape[-2:], mode="bilinear", align_corners=True
                         )
-                    if target_metrics.shape[-2:] != (480, 640):
-                        target_metrics = F.interpolate(target_metrics, size=(480, 640), mode="nearest")
                     if target_metrics.max().item() > 80.0:
                         target_metrics = target_metrics / 1000.0
                     batch_metrics = compute_depth_metrics(
