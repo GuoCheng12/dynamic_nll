@@ -31,6 +31,7 @@ def make_loader(
     filenames_file: str,
     input_size: tuple[int, int],
     batch_size: int,
+    eval_batch_size: int,
     use_dummy_data: bool,
     n_samples: int,
     do_random_rotate: bool,
@@ -59,7 +60,10 @@ def make_loader(
         min_depth_eval=min_depth_eval,
         max_depth_eval=max_depth_eval,
     )
-    return DataLoader(ds, batch_size=batch_size, shuffle=(mode == "train"), num_workers=num_workers, pin_memory=True)
+    actual_batch = batch_size if mode == "train" else eval_batch_size
+    return DataLoader(
+        ds, batch_size=actual_batch, shuffle=(mode == "train"), num_workers=num_workers, pin_memory=True
+    )
 
 
 def log_samples(images, depth_gt, depth_mean, depth_var, step: int):
@@ -94,6 +98,7 @@ def main(cfg: DictConfig) -> None:
         data_cfg.filenames_file,
         input_size,
         batch_size,
+        data_cfg.get("eval_batch_size", batch_size),
         data_cfg.use_dummy_data,
         data_cfg.n_samples,
         data_cfg.get("do_random_rotate", False),
@@ -113,6 +118,7 @@ def main(cfg: DictConfig) -> None:
         val_file,
         input_size,
         batch_size,
+        data_cfg.get("eval_batch_size", batch_size),
         data_cfg.use_dummy_data,
         data_cfg.n_samples,
         False,

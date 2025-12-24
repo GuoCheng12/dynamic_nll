@@ -15,6 +15,7 @@ do_random_rotate: true
 degree: 2.5
 eigen_crop: true
 batch_size: 16
+eval_batch_size: 2
 num_workers: 4
 use_dummy_data: false
 n_samples: 100

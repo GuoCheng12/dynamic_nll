@@ -55,9 +55,13 @@ def build_dataloaders(
     rank: int = 0,
     world_size: int = 1,
     eval_distributed: bool | None = None,
+    num_workers: int = 0,
+    eval_batch_size: int | None = None,
 ):
     if eval_distributed is None:
         eval_distributed = distributed
+    if eval_batch_size is None:
+        eval_batch_size = batch_size
     dataset = ToyRegressionDataset()
     n = len(dataset)
     train_len = int(splits[0] * n)
@@ -83,12 +87,27 @@ def build_dataloaders(
         else None
     )
     train_loader = DataLoader(
-        train_ds, batch_size=batch_size, shuffle=(train_sampler is None), sampler=train_sampler, generator=generator
+        train_ds,
+        batch_size=batch_size,
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
+        generator=generator,
+        num_workers=num_workers,
     )
     val_loader = DataLoader(
-        val_ds, batch_size=batch_size, shuffle=False, sampler=val_sampler, generator=generator
+        val_ds,
+        batch_size=eval_batch_size,
+        shuffle=False,
+        sampler=val_sampler,
+        generator=generator,
+        num_workers=num_workers,
     )
     test_loader = DataLoader(
-        test_ds, batch_size=batch_size, shuffle=False, sampler=test_sampler, generator=generator
+        test_ds,
+        batch_size=eval_batch_size,
+        shuffle=False,
+        sampler=test_sampler,
+        generator=generator,
+        num_workers=num_workers,
     )
     return train_loader, val_loader, test_loader

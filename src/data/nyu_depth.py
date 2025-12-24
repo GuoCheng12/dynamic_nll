@@ -178,6 +178,7 @@ def build_nyu_dataloaders(
         eval_distributed = distributed
     input_size = (data_cfg.input_height, data_cfg.input_width)
     batch_size = data_cfg.get("batch_size", 1)
+    eval_batch_size = data_cfg.get("eval_batch_size", batch_size)
     num_workers = data_cfg.get("num_workers", 0)
 
     train_ds = NYUDepthDataset(
@@ -236,7 +237,7 @@ def build_nyu_dataloaders(
     )
     eval_loader = DataLoader(
         eval_ds,
-        batch_size=batch_size,
+        batch_size=eval_batch_size,
         shuffle=False,
         sampler=eval_sampler,
         num_workers=num_workers,

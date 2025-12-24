@@ -87,6 +87,8 @@ def main(cfg: DictConfig) -> None:
             rank=rank,
             world_size=world_size,
             eval_distributed=eval_distributed,
+            num_workers=cfg.hyperparameters.get("num_workers", 0),
+            eval_batch_size=cfg.hyperparameters.get("eval_batch_size", cfg.hyperparameters.batch_size),
         )
         train_sampler = getattr(train_loader, "sampler", None)
         val_sampler = getattr(val_loader, "sampler", None)
@@ -114,7 +116,11 @@ def main(cfg: DictConfig) -> None:
         params = model.parameters()
         max_lrs = cfg.hyperparameters.lr
 
-    optimizer = torch.optim.AdamW(params, lr=cfg.hyperparameters.lr, weight_decay=0.1)
+    optimizer = torch.optim.AdamW(
+        params,
+        lr=cfg.hyperparameters.lr,
+        weight_decay=cfg.hyperparameters.get("weight_decay", 0.1),
+    )
     steps_per_epoch = len(train_loader)
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
