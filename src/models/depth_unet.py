@@ -40,13 +40,12 @@ class DecoderBN(nn.Module):
         self.conv3 = nn.Conv2d(features // 16, num_classes, kernel_size=3, stride=1, padding=1)
 
     def forward(self, features):
-        x_block0, x_block1, x_block2, x_block3, x_block4 = (
-            features[4],
-            features[5],
-            features[6],
-            features[8],
-            features[11],
-        )
+        # Indices aligned to timm EfficientNet-B5 module ordering.
+        x_block0 = features[3]  # 24 ch
+        x_block1 = features[4]  # 40 ch
+        x_block2 = features[5]  # 64 ch
+        x_block3 = features[7]  # 176 ch
+        x_block4 = features[11]  # 2048 ch (bn2)
         x_d0 = self.conv2(x_block4)
         x_d1 = self.up1(x_d0, x_block3)
         x_d2 = self.up2(x_d1, x_block2)
