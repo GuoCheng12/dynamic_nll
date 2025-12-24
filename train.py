@@ -70,7 +70,7 @@ def main(cfg: DictConfig) -> None:
     model = instantiate_model(cfg).to(device)
     if distributed and torch.cuda.is_available():
         model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        model = DDP(model, device_ids=[local_rank])
+        model = DDP(model, device_ids=[local_rank], find_unused_parameters=True)
 
     eval_distributed = False 
     
