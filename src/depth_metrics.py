@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Dict
-import warnings
 
 import torch
 
@@ -12,44 +11,38 @@ def compute_depth_metrics(
     min_depth: float = 1e-3,
     max_depth: float = 10.0,
     use_eigen_crop: bool = True,
-    dataset: str = "nyu_depth",
 ) -> Dict[str, float]:
     """
     Compute standard depth estimation metrics.
     pred/target: tensors with shape [B, 1, H, W].
     """
-    eps = 1e-6
-    if pred.shape[-2:] != target.shape[-2:]:
-        pred = torch.nn.functional.interpolate(pred, size=target.shape[-2:], mode="bilinear", align_corners=True)
-    pred = pred.squeeze(1)
-    target = target.squeeze(1)
+    if pred.dim() == 4:
+        pred = pred.squeeze(1)
+    if target.dim() == 4:
+        target = target.squeeze(1)
 
     mask = (target > min_depth) & (target < max_depth)
-    if use_eigen_crop and dataset == "nyu_depth":
-        height, width = target.shape[-2], target.shape[-1]
-        if height == 480 and width == 640:
-            crop_mask = torch.zeros_like(mask, dtype=torch.bool)
-            crop_mask[:, 45:471, 41:601] = True
-            mask = mask & crop_mask
-        else:
-            warnings.warn(
-                f"Skipping Eigen crop because target size is {height}x{width}, expected 480x640.",
-                RuntimeWarning,
-            )
+    if use_eigen_crop and target.shape[-2:] == (480, 640):
+        crop_mask = torch.zeros_like(mask, dtype=torch.bool)
+        crop_mask[:, 45:471, 41:601] = True
+        mask = mask & crop_mask
 
-    pred = pred[mask].clamp(min=min_depth, max=max_depth)
-    target = target[mask].clamp(min=min_depth, max=max_depth)
-    if target.numel() == 0:
+    pred_val = pred[mask]
+    target_val = target[mask]
+    if target_val.numel() == 0:
         return {"rmse": 0.0, "abs_rel": 0.0, "log10": 0.0, "delta1": 0.0, "delta2": 0.0, "delta3": 0.0}
 
-    thresh = torch.max(target / pred, pred / target)
+    pred_val = pred_val.clamp(min=min_depth, max=max_depth)
+    target_val = target_val.clamp(min=min_depth, max=max_depth)
+
+    thresh = torch.max(target_val / pred_val, pred_val / target_val)
     delta1 = (thresh < 1.25).float().mean().item()
     delta2 = (thresh < 1.25 ** 2).float().mean().item()
     delta3 = (thresh < 1.25 ** 3).float().mean().item()
 
-    abs_rel = torch.mean(torch.abs(target - pred) / target).item()
-    rmse = torch.sqrt(torch.mean((target - pred) ** 2)).item()
-    log10 = torch.mean(torch.abs(torch.log10(target) - torch.log10(pred))).item()
+    abs_rel = torch.mean(torch.abs(target_val - pred_val) / target_val).item()
+    rmse = torch.sqrt(torch.mean((target_val - pred_val) ** 2)).item()
+    log10 = torch.mean(torch.abs(torch.log10(target_val) - torch.log10(pred_val))).item()
 
     return {
         "rmse": rmse,
