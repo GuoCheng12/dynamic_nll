@@ -35,6 +35,11 @@ def make_loader(
     do_random_rotate: bool,
     degree: float,
     num_workers: int,
+    eigen_crop: bool,
+    min_depth: float,
+    max_depth: float,
+    min_depth_eval: float,
+    max_depth_eval: float,
     mode: str,
 ):
     ds = NYUDepthDataset(
@@ -47,6 +52,11 @@ def make_loader(
         n_samples=n_samples,
         do_random_rotate=do_random_rotate,
         degree=degree,
+        eigen_crop=eigen_crop,
+        min_depth=min_depth,
+        max_depth=max_depth,
+        min_depth_eval=min_depth_eval,
+        max_depth_eval=max_depth_eval,
     )
     return DataLoader(ds, batch_size=batch_size, shuffle=(mode == "train"), num_workers=num_workers, pin_memory=True)
 
@@ -72,9 +82,14 @@ def main(cfg: DictConfig) -> None:
     batch_size = data_cfg.get("batch_size", cfg.hyperparameters.batch_size)
     num_workers = data_cfg.get("num_workers", 0)
 
+    train_data_path = data_cfg.train_data_path
+    train_gt_path = data_cfg.train_gt_path
+    eval_data_path = data_cfg.eval_data_path
+    eval_gt_path = data_cfg.eval_gt_path
+
     train_loader = make_loader(
-        data_cfg.data_path,
-        data_cfg.gt_path,
+        train_data_path,
+        train_gt_path,
         data_cfg.filenames_file,
         input_size,
         batch_size,
@@ -83,12 +98,17 @@ def main(cfg: DictConfig) -> None:
         data_cfg.get("do_random_rotate", False),
         data_cfg.get("degree", 2.5),
         num_workers,
+        data_cfg.get("eigen_crop", False),
+        data_cfg.get("min_depth", 1e-3),
+        data_cfg.get("max_depth", 10.0),
+        data_cfg.get("min_depth_eval", 1e-3),
+        data_cfg.get("max_depth_eval", 10.0),
         mode="train",
     )
     val_file = data_cfg.get("filenames_file_eval", "") or data_cfg.filenames_file
     val_loader = make_loader(
-        data_cfg.get("data_path_eval", data_cfg.data_path),
-        data_cfg.get("gt_path_eval", data_cfg.gt_path),
+        eval_data_path,
+        eval_gt_path,
         val_file,
         input_size,
         batch_size,
@@ -97,6 +117,11 @@ def main(cfg: DictConfig) -> None:
         False,
         data_cfg.get("degree", 2.5),
         num_workers,
+        data_cfg.get("eigen_crop", False),
+        data_cfg.get("min_depth", 1e-3),
+        data_cfg.get("max_depth", 10.0),
+        data_cfg.get("min_depth_eval", 1e-3),
+        data_cfg.get("max_depth_eval", 10.0),
         mode="val",
     )
 

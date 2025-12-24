@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import List, Tuple
 
 import numpy as np
@@ -32,6 +33,11 @@ class NYUDepthDataset(Dataset):
         n_samples: int = 100,
         do_random_rotate: bool = False,
         degree: float = 2.5,
+        eigen_crop: bool = False,
+        min_depth: float = 1e-3,
+        max_depth: float = 10.0,
+        min_depth_eval: float = 1e-3,
+        max_depth_eval: float = 10.0,
     ):
         self.data_path = data_path
         self.gt_path = gt_path
@@ -42,13 +48,34 @@ class NYUDepthDataset(Dataset):
         self.n_samples = n_samples
         self.do_random_rotate = do_random_rotate
         self.degree = degree
+        self.eigen_crop = eigen_crop
+        self.min_depth = min_depth
+        self.max_depth = max_depth
+        self.min_depth_eval = min_depth_eval
+        self.max_depth_eval = max_depth_eval
         self.normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
         if not use_dummy_data:
-            with open(filenames_file, "r") as f:
+            resolved = self._resolve_filenames_file(filenames_file, data_path)
+            if not os.path.exists(resolved):
+                raise FileNotFoundError(f"filenames_file not found: {resolved}")
+            with open(resolved, "r") as f:
                 self.lines = [line.strip() for line in f if line.strip()]
         else:
             self.lines = []
+
+    @staticmethod
+    def _resolve_filenames_file(filenames_file: str, base_path: str) -> str:
+        if os.path.isabs(filenames_file):
+            return filenames_file
+        candidate = os.path.join(base_path, filenames_file)
+        if os.path.exists(candidate):
+            return candidate
+        repo_root = Path(__file__).resolve().parents[2]
+        repo_candidate = str(repo_root / filenames_file)
+        if os.path.exists(repo_candidate):
+            return repo_candidate
+        return filenames_file
 
     def __len__(self) -> int:
         return self.n_samples if self.use_dummy_data else len(self.lines)
@@ -75,6 +102,11 @@ class NYUDepthDataset(Dataset):
             image = TF.rotate(image, angle, interpolation=TF.InterpolationMode.BILINEAR)
             depth = TF.rotate(depth, angle, interpolation=TF.InterpolationMode.NEAREST)
 
+        if self.eigen_crop:
+            # NYUv2 eigen crop: (43, 45, 608, 472) on the original image
+            image = image.crop((43, 45, 608, 472))
+            depth = depth.crop((43, 45, 608, 472))
+
         image = TF.resize(image, self.input_size, interpolation=TF.InterpolationMode.BILINEAR)
         depth = TF.resize(depth, self.input_size, interpolation=TF.InterpolationMode.NEAREST)
 
@@ -83,6 +115,10 @@ class NYUDepthDataset(Dataset):
 
         depth_np = np.asarray(depth, dtype=np.float32)
         depth_np = depth_np / 1000.0
+        if self.mode == "train":
+            depth_np = np.clip(depth_np, self.min_depth, self.max_depth)
+        else:
+            depth_np = np.clip(depth_np, self.min_depth_eval, self.max_depth_eval)
         depth_tensor = torch.from_numpy(depth_np).unsqueeze(0)
 
         return image, depth_tensor

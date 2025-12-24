@@ -1,8 +1,8 @@
 name: nyu_depth
-data_path: /datasets/data/sync
-gt_path: /datasets/data/sync
-data_path_eval: /datasets/data/sync
-gt_path_eval: /datasets/data/sync
+train_data_path: /datasets/data/sync
+train_gt_path: /datasets/data/sync
+eval_data_path: /datasets/data/NYU_test/test
+eval_gt_path: /datasets/data/NYU_test/test
 filenames_file: configs/dataset/nyudepthv2_train_files_with_gt.txt
 filenames_file_eval: configs/dataset/nyudepthv2_test_files_with_gt.txt
 input_height: 416
