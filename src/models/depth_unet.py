@@ -138,3 +138,9 @@ class DepthUNet(nn.Module):
         var = torch.clamp(var, self.min_var, self.max_var)
 
         return mean, var
+
+    def get_1x_lr_params(self):
+        return self.encoder.parameters()
+
+    def get_10x_lr_params(self):
+        return list(self.decoder.parameters()) + list(self.conv_out.parameters())

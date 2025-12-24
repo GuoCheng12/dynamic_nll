@@ -12,7 +12,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 
 from src.data import build_dataloaders, build_nyu_dataloaders
-from src.depth_metrics import compute_error_accumulators, compute_depth_metrics
+from src.depth_metrics import compute_metrics_per_image
 from src.modules import BetaScheduler, GaussianLogLikelihoodLoss
 from src.models import DepthUNet, MLPRegressor
 from src.utils import get_device, grad_norms, mae, nll, rmse, set_seed
@@ -38,7 +38,6 @@ def instantiate_model(cfg: DictConfig) -> torch.nn.Module:
             pretrained=cfg.model.pretrained,
             min_depth=cfg.model.get("min_depth", 1e-3),
             max_val=cfg.model.get("max_val", 10.0),
-            # 如果你已经修改了 DepthUNet 支持本地权重，可以在这里加 backbone_weights_path
         )
     raise ValueError(f"Unknown model: {cfg.model.name}")
 
@@ -92,13 +91,41 @@ def main(cfg: DictConfig) -> None:
         train_sampler = getattr(train_loader, "sampler", None)
         val_sampler = getattr(val_loader, "sampler", None)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.hyperparameters.lr)
     criterion = GaussianLogLikelihoodLoss()
     scheduler = BetaScheduler(
         strategy=cfg.uncertainty.beta_strategy,
         start_beta=cfg.uncertainty.beta_start,
         end_beta=cfg.uncertainty.beta_end,
         total_steps=cfg.uncertainty.total_steps,
+    )
+
+    ddp_model = model.module if isinstance(model, DDP) else model
+    if hasattr(ddp_model, "get_1x_lr_params") and hasattr(ddp_model, "get_10x_lr_params"):
+        params = [
+            {"params": ddp_model.get_1x_lr_params(), "lr": cfg.hyperparameters.lr / 10},
+            {"params": ddp_model.get_10x_lr_params(), "lr": cfg.hyperparameters.lr},
+        ]
+        max_lrs = [group["lr"] for group in params]
+        if rank == 0:
+            print("Using differential learning rates: 1x backbone, 10x decoder/head")
+    else:
+        if rank == 0:
+            print("WARNING: get_1x_lr_params missing, using uniform LR.")
+        params = model.parameters()
+        max_lrs = cfg.hyperparameters.lr
+
+    optimizer = torch.optim.AdamW(params, lr=cfg.hyperparameters.lr, weight_decay=0.1)
+    steps_per_epoch = len(train_loader)
+    lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=max_lrs,
+        epochs=cfg.hyperparameters.epochs,
+        steps_per_epoch=steps_per_epoch,
+        cycle_momentum=True,
+        base_momentum=0.85,
+        max_momentum=0.95,
+        div_factor=25,
+        final_div_factor=100,
     )
     if rank == 0 and cfg.logging.use_wandb and wandb is not None:
         wandb.init(
@@ -109,9 +136,6 @@ def main(cfg: DictConfig) -> None:
 
     # --- 6. Training Loop ---
     global_step = 0
-    stage1_epochs = cfg.hyperparameters.get("stage1_epochs", 50)
-    stage2_lr = cfg.hyperparameters.get("lr_stage2", cfg.hyperparameters.lr)
-    stage2_span = max(cfg.hyperparameters.epochs - stage1_epochs, 1)
 
     for epoch in range(cfg.hyperparameters.epochs):
         model.train()
@@ -119,28 +143,14 @@ def main(cfg: DictConfig) -> None:
             train_sampler.set_epoch(epoch)
             
         # Initialize Train Accumulators
-        # 8 slots for NYU: [sse, abs, log10, d1, d2, d3, n_pixels, nll_sum]
+        # 9 slots for NYU: [rmse_sum, abs_rel_sum, log10_sum, d1_sum, d2_sum, d3_sum, image_count, nll_sum, nll_count]
         # 5 slots for Toy: [sse, abs, nll_sum, count, loss_sum]
         if cfg.dataset.name == "nyu_depth":
-            train_accum = torch.zeros(8, device=device)
+            train_accum = torch.zeros(9, device=device)
         else:
             train_accum = torch.zeros(5, device=device)
 
-        # Update Scheduler / LR
-        if epoch == stage1_epochs:
-            for pg in optimizer.param_groups:
-                pg["lr"] = stage2_lr
-        
-        if cfg.uncertainty.beta_strategy == "linear_decay":
-            if epoch < stage1_epochs:
-                epoch_beta = cfg.uncertainty.beta_start
-            else:
-                progress = min((epoch - stage1_epochs) / stage2_span, 1.0)
-                epoch_beta = cfg.uncertainty.beta_start + progress * (
-                    cfg.uncertainty.beta_end - cfg.uncertainty.beta_start
-                )
-        else:
-            epoch_beta = scheduler.get_beta(epoch)
+        epoch_beta = scheduler.get_beta(epoch)
 
         iterator = tqdm(train_loader, desc=f"Epoch {epoch+1}/{cfg.hyperparameters.epochs}", leave=False) if rank == 0 else train_loader
         
@@ -152,37 +162,45 @@ def main(cfg: DictConfig) -> None:
 
             mean, variance = model(data)
             
+            interpolate = cfg.dataset.name == "nyu_depth" or target.dim() == 4
             if cfg.dataset.name == "nyu_depth":
                 mask = target > cfg.dataset.get("min_depth", 1e-3)
-                loss = criterion(mean, target, variance=variance, interpolate=False, mask=mask)
+                loss = criterion(mean, target, variance=variance, interpolate=interpolate, mask=mask)
             else:
-                loss = criterion(mean, target, variance=variance, interpolate=False)
+                loss = criterion(mean, target, variance=variance, interpolate=interpolate)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            lr_scheduler.step()
 
             # --- Training Metrics Aggregation ---
             with torch.no_grad():
                 if cfg.dataset.name == "nyu_depth":
                     mean_metrics = mean.detach()
-                    # Interpolate for metrics if needed (though usually unnecessary for train logging, good for safety)
                     if mean_metrics.shape[-2:] != target.shape[-2:]:
-                        mean_metrics = F.interpolate(mean_metrics, size=target.shape[-2:], mode="bilinear", align_corners=True)
-                    
-                    # Compute Raw Errors (Not Means)
-                    batch_accum = compute_error_accumulators(
-                        mean_metrics, target.detach(),
+                        mean_metrics = F.interpolate(
+                            mean_metrics, size=target.shape[-2:], mode="bilinear", align_corners=True
+                        )
+                    batch_metrics = compute_metrics_per_image(
+                        mean_metrics,
+                        target.detach(),
                         min_depth=cfg.dataset.get("min_depth", 1e-3),
                         max_depth=cfg.dataset.get("max_depth", 10.0),
-                        use_eigen_crop=False # No crop for training metrics
+                        use_eigen_crop=False,
                     )
-                    # batch_accum is [sse, abs, log10, d1, d2, d3, count]
-                    train_accum[:7] += batch_accum
-                    
-                    # Add NLL sum manually
+                    batch_count = mean_metrics.shape[0]
+                    train_accum[0] += batch_metrics["rmse"] * batch_count
+                    train_accum[1] += batch_metrics["abs_rel"] * batch_count
+                    train_accum[2] += batch_metrics["log10"] * batch_count
+                    train_accum[3] += batch_metrics["delta1"] * batch_count
+                    train_accum[4] += batch_metrics["delta2"] * batch_count
+                    train_accum[5] += batch_metrics["delta3"] * batch_count
+                    train_accum[6] += batch_count
+
                     valid_pixels = (target > cfg.dataset.get("min_depth", 1e-3)).sum().float()
                     train_accum[7] += loss.detach() * valid_pixels
+                    train_accum[8] += valid_pixels
                 else:
                     err = mean.detach() - target
                     sse = torch.sum(err**2)
@@ -203,12 +221,16 @@ def main(cfg: DictConfig) -> None:
         if rank == 0:
             vals = train_accum.detach().cpu().tolist()
             if cfg.dataset.name == "nyu_depth":
-                total_pixels = max(vals[6], 1.0)
+                total_images = max(vals[6], 1.0)
+                nll_count = max(vals[8], 1.0)
                 train_log = {
-                    "train/rmse": math.sqrt(vals[0] / total_pixels),
-                    "train/abs_rel": vals[1] / total_pixels,
-                    "train/delta1": vals[3] / total_pixels,
-                    "train/nll": vals[7] / total_pixels,
+                    "train/rmse": vals[0] / total_images,
+                    "train/abs_rel": vals[1] / total_images,
+                    "train/log10": vals[2] / total_images,
+                    "train/delta1": vals[3] / total_images,
+                    "train/delta2": vals[4] / total_images,
+                    "train/delta3": vals[5] / total_images,
+                    "train/nll": vals[7] / nll_count,
                 }
             else:
                 total = max(vals[3], 1.0)
@@ -231,6 +253,7 @@ def main(cfg: DictConfig) -> None:
         # Initialize accumulators on ALL ranks (even if they don't run loop)
         val_loss_sum = torch.tensor(0.0, device=device)
         val_loss_count = torch.tensor(0.0, device=device)
+        # [rmse_sum, abs_rel_sum, log10_sum, d1_sum, d2_sum, d3_sum, image_count]
         depth_accum = torch.zeros(7, device=device)
 
         # Only Rank 0 runs the loop to allow TQDM and simple metrics logic
@@ -241,20 +264,32 @@ def main(cfg: DictConfig) -> None:
                 for data, target in val_iter:
                     data, target = data.to(device), target.to(device)
 
-                    # --- CRITICAL FIX: BYPASS DDP FOR SINGLE RANK EVAL ---
-                    # If we use model(data) here while rank 1-3 are waiting, it DEADLOCKS.
-                    # We must use model.module(data) to skip buffer synchronization.
-                    if distributed:
-                        mean, variance = model.module(data)
+                    # --- TTA: normal + horizontal flip (rank 0 only) ---
+                    if cfg.dataset.name == "nyu_depth":
+                        if distributed:
+                            pred_raw, variance = model.module(data)
+                            pred_flip_raw, _ = model.module(torch.flip(data, [3]))
+                        else:
+                            pred_raw, variance = model(data)
+                            pred_flip_raw, _ = model(torch.flip(data, [3]))
+                        pred_flip = torch.flip(pred_flip_raw, [3])
+                        mean = 0.5 * (pred_raw + pred_flip)
                     else:
-                        mean, variance = model(data)
+                        if distributed:
+                            mean, variance = model.module(data)
+                        else:
+                            mean, variance = model(data)
 
                     # Metric Calculation
+                    interpolate = cfg.dataset.name == "nyu_depth" or target.dim() == 4
+                    mean_for_loss = mean
+                    if cfg.dataset.name == "nyu_depth":
+                        mean_for_loss = pred_raw
                     if cfg.dataset.name == "nyu_depth":
                         min_d = cfg.dataset.get("min_depth_eval", cfg.dataset.get("min_depth", 1e-3))
                         mask = target > min_d
                         
-                        val_loss = criterion(mean, target, variance=variance, interpolate=False, mask=mask)
+                        val_loss = criterion(mean_for_loss, target, variance=variance, interpolate=interpolate, mask=mask)
                         
                         valid_pixels = mask.sum().float()
                         val_loss_sum += val_loss.detach() * valid_pixels
@@ -268,16 +303,24 @@ def main(cfg: DictConfig) -> None:
                         if target.max() > 80.0:
                             target = target / 1000.0
 
-                        batch_accum = compute_error_accumulators(
-                            mean, target,
+                        batch_metrics = compute_metrics_per_image(
+                            mean,
+                            target,
                             min_depth=min_d,
                             max_depth=cfg.dataset.get("max_depth_eval", cfg.dataset.get("max_depth", 10.0)),
-                            use_eigen_crop=True, # Always use Eigen Crop for Val
+                            use_eigen_crop=True,
                         )
-                        depth_accum += batch_accum
+                        batch_count = mean.shape[0]
+                        depth_accum[0] += batch_metrics["rmse"] * batch_count
+                        depth_accum[1] += batch_metrics["abs_rel"] * batch_count
+                        depth_accum[2] += batch_metrics["log10"] * batch_count
+                        depth_accum[3] += batch_metrics["delta1"] * batch_count
+                        depth_accum[4] += batch_metrics["delta2"] * batch_count
+                        depth_accum[5] += batch_metrics["delta3"] * batch_count
+                        depth_accum[6] += batch_count
                     else:
                         # Toy Dataset Logic
-                        val_loss = criterion(mean, target, variance=variance, interpolate=False)
+                        val_loss = criterion(mean_for_loss, target, variance=variance, interpolate=interpolate)
                         batch_count = target.numel()
                         val_loss_sum += val_loss.detach() * batch_count
                         val_loss_count += batch_count
@@ -309,13 +352,14 @@ def main(cfg: DictConfig) -> None:
         if rank == 0:
             if cfg.dataset.name == "nyu_depth":
                 vals = depth_accum.cpu().tolist()
-                total_pixels = max(vals[6], 1.0)
+                total_images = max(vals[6], 1.0)
                 val_log = {
-                    "val/rmse": math.sqrt(vals[0] / total_pixels),
-                    "val/abs_rel": vals[1] / total_pixels,
-                    "val/delta1": vals[3] / total_pixels,
-                    "val/delta2": vals[4] / total_pixels,
-                    "val/delta3": vals[5] / total_pixels,
+                    "val/rmse": vals[0] / total_images,
+                    "val/abs_rel": vals[1] / total_images,
+                    "val/log10": vals[2] / total_images,
+                    "val/delta1": vals[3] / total_images,
+                    "val/delta2": vals[4] / total_images,
+                    "val/delta3": vals[5] / total_images,
                 }
             else:
                 val_log = {"val/loss": val_loss_avg}

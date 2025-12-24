@@ -100,27 +100,48 @@ class NYUDepthDataset(Dataset):
 
     def __getitem__(self, idx):
         if self.use_dummy_data:
-            c, h, w = 3, self.input_size[0], self.input_size[1]
-            image = torch.rand(c, h, w)
-            depth = torch.rand(1, h, w)
+            # ... dummy data ...
             return image, depth
 
         image_path, depth_path = self._load_paths(self.lines[idx])
         image = Image.open(image_path).convert("RGB")
         depth = Image.open(depth_path)
 
+        # === 训练模式逻辑 ===
         if self.mode == "train":
-            if self.train_crop:
-                # NYUv2 boundary crop to remove invalid edges (training only).
-                image = image.crop((43, 45, 608, 472))
-                depth = depth.crop((43, 45, 608, 472))
+            # 1. [Fix] 强制去除 NYU 的白边 (参考原作者)
+            # 无论参数如何，训练时都应该去掉这个 artifact
+            image = image.crop((43, 45, 608, 472))
+            depth = depth.crop((43, 45, 608, 472))
 
+            # 2. [Fix] Horizontal Flip (参考原作者)
+            if random.random() > 0.5:
+                image = TF.hflip(image)
+                depth = TF.hflip(depth)
+
+            # 3. [Fix] Color Jitter (参考原作者)
+            # 原作者做了 Gamma, Brightness, Color。这里用 torchvision 的标准实现近似，效果更稳
+            # 深度估计对色彩很敏感，这个必须加
+            if random.random() > 0.5:
+                # 亮度(0.4), 对比度(0.4), 饱和度(0.4), 色相(0.1) 是比较通用的设置
+                # 原作者只用了 Brightness (0.9-1.1) 和 Color multiply，下面的设置涵盖了它
+                color_jitter = transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1)
+                image = color_jitter(image)
+
+            # 4. Rotation (保留你自己的逻辑，但建议角度小一点)
             if self.do_random_rotate:
                 angle = (torch.rand(1).item() - 0.5) * 2 * self.degree
                 image = TF.rotate(image, angle, interpolation=TF.InterpolationMode.BILINEAR)
                 depth = TF.rotate(depth, angle, interpolation=TF.InterpolationMode.NEAREST)
 
+            # 5. Random Crop (保持不变)
             image, depth = self._random_crop(image, depth, self.input_size)
+        
+        # === 验证模式逻辑 ===
+        else:
+            # [Optional] 如果显存不够，可能需要在这里 Resize 验证集图片
+            # image = TF.resize(image, self.input_size)
+            pass
 
         image = TF.to_tensor(image)
         image = self.normalize(image)
