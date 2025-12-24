@@ -5,3 +5,4 @@ numpy
 matplotlib
 wandb
 tqdm
+timm

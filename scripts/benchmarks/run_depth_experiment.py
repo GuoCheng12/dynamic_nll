@@ -144,7 +144,11 @@ def main(cfg: DictConfig) -> None:
     )
 
     if cfg.logging.use_wandb and wandb is not None:
-        wandb.init(project=cfg.logging.project_name, config=OmegaConf.to_container(cfg, resolve=True))
+        wandb.init(
+            project=cfg.logging.project_name,
+            name=cfg.logging.run_name,
+            config=OmegaConf.to_container(cfg, resolve=True),
+        )
 
     global_step = 0
     for epoch in range(cfg.hyperparameters.epochs):

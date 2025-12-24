@@ -96,7 +96,11 @@ def main(cfg: DictConfig) -> None:
     )
 
     if rank == 0 and cfg.logging.use_wandb and wandb is not None:
-        wandb.init(project=cfg.logging.project_name, config=OmegaConf.to_container(cfg, resolve=True))
+        wandb.init(
+            project=cfg.logging.project_name,
+            name=cfg.logging.run_name,
+            config=OmegaConf.to_container(cfg, resolve=True),
+        )
 
     global_step = 0
     stage1_epochs = cfg.hyperparameters.get("stage1_epochs", 50)
