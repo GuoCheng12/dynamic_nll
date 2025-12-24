@@ -57,18 +57,53 @@ class DecoderBN(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, backend: nn.Module):
+    def __init__(self, backbone: nn.Module):
         super().__init__()
-        self.original_model = backend
+        self.backbone = backbone
+        # FeatureListNet stores the original model under .model
+        self.model = getattr(backbone, "model", backbone)
 
     def forward(self, x: torch.Tensor):
-        features = [x]
-        for k, v in self.original_model._modules.items():
-            if k == "blocks":
-                for _, vi in v._modules.items():
-                    features.append(vi(features[-1]))
-            else:
-                features.append(v(features[-1]))
+        feats = self.backbone(x)
+        if len(feats) < 5:
+            raise RuntimeError("Expected at least 5 feature maps from EfficientNet backbone.")
+        channels = [feat.shape[1] for feat in feats]
+
+        expected_channels = [24, 40, 64, 176]
+        missing = [ch for ch in expected_channels if ch not in channels]
+        if missing:
+            raise RuntimeError(f"EfficientNet features missing channels {missing}; got {channels}")
+
+        def pick_by_channels(target: int) -> torch.Tensor:
+            idx = channels.index(target)
+            return feats[idx]
+
+        x_block0 = pick_by_channels(24)
+        x_block1 = pick_by_channels(40)
+        x_block2 = pick_by_channels(64)
+        x_block3 = pick_by_channels(176)
+        x_block4 = feats[channels.index(max(channels))]
+
+        # Apply conv_head -> bn2 -> act2 to match reference encoder tail
+        if hasattr(self.model, "conv_head"):
+            if x_block4.shape[1] == self.model.conv_head.in_channels:
+                x_block4 = self.model.conv_head(x_block4)
+                if hasattr(self.model, "bn2"):
+                    x_block4 = self.model.bn2(x_block4)
+                if hasattr(self.model, "act2"):
+                    x_block4 = self.model.act2(x_block4)
+            elif x_block4.shape[1] == self.model.conv_head.out_channels:
+                if hasattr(self.model, "bn2"):
+                    x_block4 = self.model.bn2(x_block4)
+                if hasattr(self.model, "act2"):
+                    x_block4 = self.model.act2(x_block4)
+
+        features = [None] * 12
+        features[4] = x_block0
+        features[5] = x_block1
+        features[6] = x_block2
+        features[8] = x_block3
+        features[11] = x_block4
         return features
 
 
@@ -95,11 +130,7 @@ class DepthUNet(nn.Module):
         self.init_var_offset = softmax_inverse(initial_var - self.min_var)
         self.max_var = 10.0
 
-        backbone = timm.create_model(encoder, pretrained=pretrained)
-        if hasattr(backbone, "global_pool"):
-            backbone.global_pool = nn.Identity()
-        if hasattr(backbone, "classifier"):
-            backbone.classifier = nn.Identity()
+        backbone = timm.create_model(encoder, pretrained=pretrained, features_only=True, out_indices=(0, 1, 2, 3, 4))
         self.encoder = Encoder(backbone)
         self.decoder = DecoderBN(num_classes=128)
         self.conv_out = nn.Conv2d(128, 2, kernel_size=1, stride=1, padding=0)
