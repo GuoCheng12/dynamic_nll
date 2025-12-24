@@ -12,7 +12,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 
 from src.data import build_dataloaders, build_nyu_dataloaders
-from src.depth_metrics import compute_depth_metrics
+from src.depth_metrics import compute_depth_errors, compute_depth_metrics
 from src.modules import BetaScheduler, GaussianLogLikelihoodLoss
 from src.models import DepthUNet, MLPRegressor
 from src.utils import get_device, grad_norms, mae, nll, rmse, set_seed
@@ -185,7 +185,10 @@ def main(cfg: DictConfig) -> None:
         # Validation hook for plateau strategy or research logging
         model.eval()
         val_loss_accum, count = 0.0, 0
-        depth_sums = {"rmse": 0.0, "abs_rel": 0.0, "delta1": 0.0}
+        depth_sse = 0.0
+        depth_abs_sum = 0.0
+        depth_d1_count = 0.0
+        depth_pixels = 0.0
         with torch.no_grad():
             val_iter = tqdm(val_loader, desc="Val", leave=False) if rank == 0 else val_loader
             for data, target in val_iter:
@@ -208,36 +211,45 @@ def main(cfg: DictConfig) -> None:
                         )
                     if target_metrics.max().item() > 80.0:
                         target_metrics = target_metrics / 1000.0
-                    batch_metrics = compute_depth_metrics(
+                    errors = compute_depth_errors(
                         mean_metrics,
                         target_metrics,
                         min_depth=cfg.dataset.get("min_depth_eval", cfg.dataset.get("min_depth", 1e-3)),
                         max_depth=cfg.dataset.get("max_depth_eval", cfg.dataset.get("max_depth", 10.0)),
                         use_eigen_crop=True,
                     )
-                    for k in depth_sums:
-                        depth_sums[k] += batch_metrics[k] * batch_size
+                    depth_sse += errors["sse"]
+                    depth_abs_sum += errors["abs_sum"]
+                    depth_d1_count += errors["d1_count"]
+                    depth_pixels += errors["n_pixels"]
         if distributed:
             tensor = torch.tensor([val_loss_accum, count], device=device)
             dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
             val_loss_accum, count = tensor.tolist()
             if cfg.dataset.name == "nyu_depth":
                 depth_tensor = torch.tensor(
-                    [depth_sums["rmse"], depth_sums["abs_rel"], depth_sums["delta1"], count],
+                    [depth_sse, depth_abs_sum, depth_d1_count, depth_pixels],
                     device=device,
                 )
                 dist.all_reduce(depth_tensor, op=dist.ReduceOp.SUM)
-                depth_sums["rmse"], depth_sums["abs_rel"], depth_sums["delta1"], _ = depth_tensor.tolist()
-                count = depth_tensor.tolist()[3]
+                depth_sse, depth_abs_sum, depth_d1_count, depth_pixels = depth_tensor.tolist()
         val_loss_avg = val_loss_accum / max(count, 1)
         if cfg.uncertainty.beta_strategy == "plateau":
             scheduler.get_beta(global_step, current_loss=val_loss_avg)
         if rank == 0:
             if cfg.dataset.name == "nyu_depth":
+                if depth_pixels > 0:
+                    rmse = math.sqrt(depth_sse / depth_pixels)
+                    abs_rel = depth_abs_sum / depth_pixels
+                    delta1 = depth_d1_count / depth_pixels
+                else:
+                    rmse = 0.0
+                    abs_rel = 0.0
+                    delta1 = 0.0
                 val_log = {
-                    "val/rmse": depth_sums["rmse"] / max(count, 1),
-                    "val/abs_rel": depth_sums["abs_rel"] / max(count, 1),
-                    "val/delta1": depth_sums["delta1"] / max(count, 1),
+                    "val/rmse": rmse,
+                    "val/abs_rel": abs_rel,
+                    "val/delta1": delta1,
                 }
             else:
                 val_log = {"val/loss": val_loss_avg}
