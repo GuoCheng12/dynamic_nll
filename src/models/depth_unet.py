@@ -57,18 +57,18 @@ class DecoderBN(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, backbone: nn.Module):
+    def __init__(self, backend: nn.Module):
         super().__init__()
-        self.original_model = backbone
+        self.original_model = backend
 
     def forward(self, x: torch.Tensor):
-        feats = self.original_model(x)
-        features = [None] * 12
-        features[4] = feats[0]
-        features[5] = feats[1]
-        features[6] = feats[2]
-        features[8] = feats[3]
-        features[11] = feats[4]
+        features = [x]
+        for k, v in self.original_model._modules.items():
+            if k == "blocks":
+                for _, vi in v._modules.items():
+                    features.append(vi(features[-1]))
+            else:
+                features.append(v(features[-1]))
         return features
 
 
@@ -95,7 +95,11 @@ class DepthUNet(nn.Module):
         self.init_var_offset = softmax_inverse(initial_var - self.min_var)
         self.max_var = 10.0
 
-        backbone = timm.create_model(encoder, pretrained=pretrained, features_only=True)
+        backbone = timm.create_model(encoder, pretrained=pretrained)
+        if hasattr(backbone, "global_pool"):
+            backbone.global_pool = nn.Identity()
+        if hasattr(backbone, "classifier"):
+            backbone.classifier = nn.Identity()
         self.encoder = Encoder(backbone)
         self.decoder = DecoderBN(num_classes=128)
         self.conv_out = nn.Conv2d(128, 2, kernel_size=1, stride=1, padding=0)
