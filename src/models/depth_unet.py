@@ -1,18 +1,9 @@
-import math
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
-try:
-    import timm
-except ImportError as exc:  # pragma: no cover
-    raise ImportError("timm is required for DepthUNet") from exc
-
-
-def softmax_inverse(x: float) -> float:
-    return math.log(math.exp(x) - 1)
-
+# --- 1. Original Author's Helper Classes (EXACT COPY) ---
 
 class UpSampleBN(nn.Module):
     def __init__(self, skip_input, output_features):
@@ -23,11 +14,11 @@ class UpSampleBN(nn.Module):
             nn.LeakyReLU(),
             nn.Conv2d(output_features, output_features, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(output_features),
-            nn.LeakyReLU(),
+            nn.LeakyReLU()
         )
 
     def forward(self, x, concat_with):
-        up_x = F.interpolate(x, size=[concat_with.size(2), concat_with.size(3)], mode="bilinear", align_corners=True)
+        up_x = F.interpolate(x, size=[concat_with.size(2), concat_with.size(3)], mode='bilinear', align_corners=True)
         f = torch.cat([up_x, concat_with], dim=1)
         return self._net(f)
 
@@ -47,15 +38,9 @@ class DecoderBN(nn.Module):
         self.conv3 = nn.Conv2d(features // 16, num_classes, kernel_size=3, stride=1, padding=1)
 
     def forward(self, features):
-        # [CRITICAL FIX] Adjusted indices for timm EfficientNet-B5
-        # Original Author (gen-efficientnet): [4, 5, 6, 8, 11]
-        # Current (timm): All shifted by -1 because timm merges activation layers differently
-        
-        x_block0 = features[3]   # Block 0 (24 ch)  <-- Was 4
-        x_block1 = features[4]   # Block 1 (40 ch)  <-- Was 5
-        x_block2 = features[5]   # Block 2 (64 ch)  <-- Was 6
-        x_block3 = features[7]   # Block 4 (176 ch) <-- Was 8 (This caused the 2352 vs 2224 bug)
-        x_block4 = features[10]  # Conv Head (2048 ch) <-- Was 11
+        # [REVERTED TO ORIGINAL INDICES]
+        # Since we use gen-efficientnet-pytorch, these are correct again.
+        x_block0, x_block1, x_block2, x_block3, x_block4 = features[4], features[5], features[6], features[8], features[11]
 
         x_d0 = self.conv2(x_block4)
         x_d1 = self.up1(x_d0, x_block3)
@@ -74,75 +59,88 @@ class Encoder(nn.Module):
     def forward(self, x):
         features = [x]
         for k, v in self.original_model._modules.items():
-            if k == "blocks":
-                for _, vi in v._modules.items():
+            if (k == 'blocks'):
+                for ki, vi in v._modules.items():
                     features.append(vi(features[-1]))
             else:
                 features.append(v(features[-1]))
         return features
 
 
+# --- 2. DepthUNet Wrapper (Modified for Hub Load) ---
+
 class DepthUNet(nn.Module):
-    def __init__(
-        self,
-        encoder="tf_efficientnet_b5_ap",
-        pretrained=True,
-        min_depth=1e-3,
-        max_val=10.0,
-        backbone_weights_path=None,
-    ):
+    def __init__(self, encoder='tf_efficientnet_b5_ap', pretrained=True, min_depth=1e-3, max_val=10.0):
         super(DepthUNet, self).__init__()
         self.min_val = min_depth
         self.max_val = max_val
-
-        initial_mean = 1.0
-        self.init_mean_offset = softmax_inverse(initial_mean - self.min_val)
-
+        
+        # Init Offsets (Critical for NLL convergence)
+        # Using Log(Exp(x)-1) inverse to match softplus
+        initial_mean = 1.5 # Start slightly higher than 1.0 to be safe
+        self.init_mean_offset = math.log(math.exp(initial_mean - self.min_val) - 1)
+        
         self.min_var = 1e-6
         initial_var = 1.0
-        self.init_var_offset = softmax_inverse(initial_var - self.min_var)
-        self.max_var = 10.0
+        self.init_var_offset = math.log(math.exp(initial_var - self.min_var) - 1)
+        self.max_var = 10.0 
 
-        print(f"Loading backbone: {encoder}")
-        if backbone_weights_path is not None:
-            backbone = timm.create_model(encoder, pretrained=False)
-            print(f"Loading local weights from {backbone_weights_path}")
-            state = torch.load(backbone_weights_path, map_location="cpu")
-            backbone.load_state_dict(state, strict=False)
-        else:
-            backbone = timm.create_model(encoder, pretrained=pretrained)
+        # --- Load Backbone via Torch Hub (Original Way) ---
+        print(f"Loading backbone from torch.hub: rwightman/gen-efficientnet-pytorch, model: {encoder}")
+        # Note: This requires internet access on the first run to download the code and weights
+        try:
+            basemodel = torch.hub.load('rwightman/gen-efficientnet-pytorch', encoder, pretrained=pretrained)
+        except Exception as e:
+            print("Failed to load via torch.hub. Please ensure you have internet access or the repo is cached.")
+            raise e
 
-        if hasattr(backbone, "global_pool"):
-            backbone.global_pool = nn.Identity()
-        if hasattr(backbone, "classifier"):
-            backbone.classifier = nn.Identity()
-
-        self.encoder = Encoder(backbone)
+        # Remove last layers (Original Author Logic)
+        print('Removing last two layers (global_pool & classifier).')
+        basemodel.global_pool = nn.Identity()
+        basemodel.classifier = nn.Identity()
+        
+        # Wrap with Author's Encoder
+        self.encoder = Encoder(basemodel)
+        
+        # Decoder (output 128 channels)
         self.decoder = DecoderBN(num_classes=128)
+        
+        # Prediction Head (128 -> 2 channels: Mean, Var)
+        # We replace the author's Bin head with our Gaussian head
         self.conv_out = nn.Sequential(
             nn.Conv2d(128, 2, kernel_size=1, stride=1, padding=0),
         )
 
     def forward(self, x):
+        # Encoder -> Decoder
         enc_feats = self.encoder(x)
         unet_out = self.decoder(enc_feats)
+        
+        # Prediction Head
         out = self.conv_out(unet_out)
-
+        
+        # Resolution Fix: Interpolate to input size if needed
         if out.shape[-2:] != x.shape[-2:]:
-            out = F.interpolate(out, size=x.shape[-2:], mode="bilinear", align_corners=True)
-
+            out = F.interpolate(out, size=x.shape[-2:], mode='bilinear', align_corners=True)
+            
+        # Split and Post-process (Softplus + Offset)
         mean = out[:, :1]
         mean = F.softplus(mean + self.init_mean_offset) + self.min_val
         mean = torch.clamp(mean, self.min_val, self.max_val)
 
         var = out[:, 1:2]
         var = F.softplus(var + self.init_var_offset) + self.min_var
-        var = torch.clamp(var, self.min_var, self.max_var)
+        var = torch.clamp(var, self.min_val, self.max_var)
 
+        # Return order: Depth, Variance (Matches your train.py expectation)
         return mean, var
 
     def get_1x_lr_params(self):
+        """Returns generator for backbone parameters (lr/10)"""
         return self.encoder.parameters()
 
     def get_10x_lr_params(self):
-        return list(self.decoder.parameters()) + list(self.conv_out.parameters())
+        """Returns generator for decoder/head parameters (lr)"""
+        modules = [self.decoder, self.conv_out]
+        for m in modules:
+            yield from m.parameters()
