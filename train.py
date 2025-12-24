@@ -113,6 +113,10 @@ def main(cfg: DictConfig) -> None:
         model.train()
         if distributed and hasattr(train_sampler, "set_epoch"):
             train_sampler.set_epoch(epoch)
+        if cfg.dataset.name == "nyu_depth":
+            train_accum = torch.zeros(8, device=device)
+        else:
+            train_accum = torch.zeros(5, device=device)
         # Two-phase schedule: phase 1 constant beta/lr, phase 2 beta decay + lr drop
         if epoch == stage1_epochs:
             for pg in optimizer.param_groups:
@@ -145,99 +149,62 @@ def main(cfg: DictConfig) -> None:
             loss.backward()
             optimizer.step()
 
-            log_payload: Optional[Dict[str, Any]] = None
             if cfg.dataset.name == "nyu_depth":
                 mean_metrics = mean.detach()
                 if mean_metrics.shape[-2:] != target.shape[-2:]:
                     mean_metrics = torch.nn.functional.interpolate(
                         mean_metrics, size=target.shape[-2:], mode="bilinear", align_corners=True
                     )
-                if distributed:
-                    batch_accum = compute_error_accumulators(
-                        mean_metrics,
-                        target.detach(),
-                        min_depth=cfg.dataset.get("min_depth", 1e-3),
-                        max_depth=cfg.dataset.get("max_depth", 10.0),
-                        use_eigen_crop=False,
-                    )
-                    valid_pixels = (target > cfg.dataset.get("min_depth", 1e-3)).sum().to(dtype=loss.dtype)
-                    loss_sum = loss.detach() * valid_pixels
-                    batch_stats = torch.cat([batch_accum, loss_sum.unsqueeze(0)])
-                    dist.all_reduce(batch_stats, op=dist.ReduceOp.SUM)
-                    if rank == 0:
-                        vals = batch_stats.detach().cpu().tolist()
-                        total_pixels = max(vals[6], 1.0)
-                        rmse_val = math.sqrt(vals[0] / total_pixels)
-                        abs_rel_val = vals[1] / total_pixels
-                        delta1_val = vals[3] / total_pixels
-                        loss_mean = vals[7] / total_pixels
-                        log_payload = {
-                            "train/loss": loss_mean,
-                            "train/beta": epoch_beta,
-                            "train/rmse": rmse_val,
-                            "train/abs_rel": abs_rel_val,
-                            "train/delta1": delta1_val,
-                            "train/nll": loss_mean,
-                        }
-                elif rank == 0:
-                    depth_metrics = compute_depth_metrics(
-                        mean_metrics,
-                        target.detach(),
-                        min_depth=cfg.dataset.get("min_depth", 1e-3),
-                        max_depth=cfg.dataset.get("max_depth", 10.0),
-                        use_eigen_crop=False,
-                    )
-                    log_payload = {
-                        "train/loss": loss.item(),
-                        "train/beta": epoch_beta,
-                        "train/rmse": depth_metrics["rmse"],
-                        "train/abs_rel": depth_metrics["abs_rel"],
-                        "train/delta1": depth_metrics["delta1"],
-                        "train/nll": loss.item(),
-                    }
+                batch_accum = compute_error_accumulators(
+                    mean_metrics,
+                    target.detach(),
+                    min_depth=cfg.dataset.get("min_depth", 1e-3),
+                    max_depth=cfg.dataset.get("max_depth", 10.0),
+                    use_eigen_crop=False,
+                )
+                valid_pixels = (target > cfg.dataset.get("min_depth", 1e-3)).sum().to(dtype=loss.dtype)
+                train_accum[:7] += batch_accum
+                train_accum[7] += loss.detach() * valid_pixels
             else:
-                if distributed:
-                    err = mean.detach() - target
-                    sse = torch.sum(err**2)
-                    abs_sum = torch.sum(torch.abs(err))
-                    nll_sum = torch.sum(
-                        -0.5 * ((err**2) / variance.detach() + torch.log(variance.detach()))
-                    )
-                    count = err.new_tensor(float(err.numel()))
-                    loss_sum = loss.detach() * count
-                    batch_stats = torch.stack([sse, abs_sum, nll_sum, count, loss_sum])
-                    dist.all_reduce(batch_stats, op=dist.ReduceOp.SUM)
-                    if rank == 0:
-                        vals = batch_stats.detach().cpu().tolist()
-                        total = max(vals[3], 1.0)
-                        metrics = {
-                            "mse": vals[0] / total,
-                            "mae": vals[1] / total,
-                            "rmse": math.sqrt(vals[0] / total),
-                            "nll": vals[2] / total,
-                        }
-                        loss_mean = vals[4] / total
-                        norms = grad_norms(model)
-                        log_payload = {
-                            "train/loss": loss_mean,
-                            "train/beta": epoch_beta,
-                            **{f"train/{k}": v for k, v in metrics.items()},
-                            **{f"train/{k}": v for k, v in norms.items()},
-                        }
-                elif rank == 0:
-                    metrics = compute_metrics(mean.detach(), variance.detach(), target)
-                    norms = grad_norms(model)
-                    log_payload = {
-                        "train/loss": loss.item(),
-                        "train/beta": epoch_beta,
-                        **{f"train/{k}": v for k, v in metrics.items()},
-                        **{f"train/{k}": v for k, v in norms.items()},
-                    }
-            if rank == 0 and log_payload is not None:
-                if cfg.logging.use_wandb and wandb is not None:
-                    wandb.log(log_payload, step=global_step)
+                err = mean.detach() - target
+                sse = torch.sum(err**2)
+                abs_sum = torch.sum(torch.abs(err))
+                nll_sum = torch.sum(-0.5 * ((err**2) / variance.detach() + torch.log(variance.detach())))
+                count = err.new_tensor(float(err.numel()))
+                train_accum += torch.stack([sse, abs_sum, nll_sum, count, loss.detach() * count])
+
+            if rank == 0 and cfg.logging.use_wandb and wandb is not None:
+                wandb.log({"train/loss": loss.item(), "train/beta": epoch_beta}, step=global_step)
 
             global_step += 1
+
+        if distributed:
+            dist.all_reduce(train_accum, op=dist.ReduceOp.SUM)
+        if rank == 0:
+            if cfg.dataset.name == "nyu_depth":
+                vals = train_accum.detach().cpu().tolist()
+                total_pixels = max(vals[6], 1.0)
+                train_log = {
+                    "train/rmse": math.sqrt(vals[0] / total_pixels),
+                    "train/abs_rel": vals[1] / total_pixels,
+                    "train/log10": vals[2] / total_pixels,
+                    "train/delta1": vals[3] / total_pixels,
+                    "train/delta2": vals[4] / total_pixels,
+                    "train/delta3": vals[5] / total_pixels,
+                    "train/nll": vals[7] / total_pixels,
+                }
+            else:
+                vals = train_accum.detach().cpu().tolist()
+                total = max(vals[3], 1.0)
+                train_log = {
+                    "train/mse": vals[0] / total,
+                    "train/mae": vals[1] / total,
+                    "train/rmse": math.sqrt(vals[0] / total),
+                    "train/nll": vals[2] / total,
+                    "train/loss": vals[4] / total,
+                }
+            if cfg.logging.use_wandb and wandb is not None:
+                wandb.log(train_log, step=global_step)
 
         if distributed:
             dist.barrier()
