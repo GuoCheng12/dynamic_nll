@@ -77,13 +77,21 @@ class NYUDepthDataset(Dataset):
             return repo_candidate
         return filenames_file
 
+    @staticmethod
+    def _strip_leading_slash(path: str) -> str:
+        if path.startswith(("/", "\\")):
+            return path[1:]
+        return path
+
     def __len__(self) -> int:
         return self.n_samples if self.use_dummy_data else len(self.lines)
 
     def _load_paths(self, line: str) -> Tuple[str, str]:
         parts = line.split()
-        image_path = os.path.join(self.data_path, parts[0])
-        depth_path = os.path.join(self.gt_path, parts[1])
+        image_rel = self._strip_leading_slash(parts[0])
+        depth_rel = self._strip_leading_slash(parts[1])
+        image_path = os.path.join(self.data_path, image_rel)
+        depth_path = os.path.join(self.gt_path, depth_rel)
         return image_path, depth_path
 
     def __getitem__(self, idx):
