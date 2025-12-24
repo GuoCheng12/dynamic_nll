@@ -36,7 +36,6 @@ def instantiate_model(cfg: DictConfig) -> torch.nn.Module:
             encoder=cfg.model.encoder,
             pretrained=cfg.model.pretrained,
             min_depth=cfg.model.get("min_depth", 1e-3),
-            min_var=cfg.model.get("min_var", 1e-6),
             max_val=cfg.model.get("max_val", 10.0),
         )
     raise ValueError(f"Unknown model: {cfg.model.name}")
