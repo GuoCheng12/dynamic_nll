@@ -151,7 +151,10 @@ def build_nyu_dataloaders(
     distributed: bool = False,
     rank: int = 0,
     world_size: int = 1,
+    eval_distributed: bool | None = None,
 ):
+    if eval_distributed is None:
+        eval_distributed = distributed
     input_size = (data_cfg.input_height, data_cfg.input_width)
     batch_size = data_cfg.get("batch_size", 1)
     num_workers = data_cfg.get("num_workers", 0)
@@ -198,7 +201,7 @@ def build_nyu_dataloaders(
     )
     eval_sampler = (
         DistributedSampler(eval_ds, num_replicas=world_size, rank=rank, shuffle=False)
-        if distributed
+        if eval_distributed
         else None
     )
 

@@ -54,7 +54,10 @@ def build_dataloaders(
     distributed: bool = False,
     rank: int = 0,
     world_size: int = 1,
+    eval_distributed: bool | None = None,
 ):
+    if eval_distributed is None:
+        eval_distributed = distributed
     dataset = ToyRegressionDataset()
     n = len(dataset)
     train_len = int(splits[0] * n)
@@ -71,12 +74,12 @@ def build_dataloaders(
     )
     val_sampler = (
         DistributedSampler(val_ds, num_replicas=world_size, rank=rank, shuffle=False)
-        if distributed
+        if eval_distributed
         else None
     )
     test_sampler = (
         DistributedSampler(test_ds, num_replicas=world_size, rank=rank, shuffle=False)
-        if distributed
+        if eval_distributed
         else None
     )
     train_loader = DataLoader(

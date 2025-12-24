@@ -32,32 +32,31 @@ def _masked_depth_values(
     return pred_val, target_val
 
 
-def compute_depth_errors(
+def compute_error_accumulators(
     pred: torch.Tensor,
     target: torch.Tensor,
     min_depth: float = 1e-3,
     max_depth: float = 10.0,
     use_eigen_crop: bool = True,
-) -> Dict[str, float]:
+) -> torch.Tensor:
     pred_val, target_val = _masked_depth_values(pred, target, min_depth, max_depth, use_eigen_crop)
     if target_val.numel() == 0:
-        return {"sse": 0.0, "abs_sum": 0.0, "d1_count": 0.0, "n_pixels": 0.0}
+        return torch.zeros(7, device=pred.device, dtype=pred.dtype)
 
     pred_val = pred_val.clamp(min=min_depth, max=max_depth)
     target_val = target_val.clamp(min=min_depth, max=max_depth)
 
-    sse = torch.sum((target_val - pred_val) ** 2).item()
-    abs_sum = torch.sum(torch.abs(target_val - pred_val) / target_val).item()
+    sse = torch.sum((target_val - pred_val) ** 2)
+    abs_sum = torch.sum(torch.abs(target_val - pred_val) / target_val)
+    log10_sum = torch.sum(torch.abs(torch.log10(target_val) - torch.log10(pred_val)))
 
     thresh = torch.max(target_val / pred_val, pred_val / target_val)
-    d1_count = (thresh < 1.25).float().sum().item()
+    d1_count = (thresh < 1.25).float().sum()
+    d2_count = (thresh < 1.25 ** 2).float().sum()
+    d3_count = (thresh < 1.25 ** 3).float().sum()
 
-    return {
-        "sse": sse,
-        "abs_sum": abs_sum,
-        "d1_count": d1_count,
-        "n_pixels": float(target_val.numel()),
-    }
+    n_pixels = pred_val.new_tensor(float(target_val.numel()))
+    return torch.stack([sse, abs_sum, log10_sum, d1_count, d2_count, d3_count, n_pixels])
 
 
 def compute_depth_metrics(
