@@ -106,6 +106,7 @@ class DepthUNet(nn.Module):
     def forward(self, x: torch.Tensor):
         out = self.decoder(self.encoder(x))
         out = self.conv_out(out)
+        out = F.interpolate(out, size=x.shape[-2:], mode="bilinear", align_corners=True)
 
         mean = out[:, :1]
         mean = F.softplus(mean + self.init_mean_offset) + self.min_val
