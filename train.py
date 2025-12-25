@@ -289,27 +289,19 @@ def main(cfg: DictConfig) -> None:
                 for data, target in val_iter:
                     data, target = data.to(device), target.to(device)
 
-                    # --- TTA: normal + horizontal flip (rank 0 only) ---
-                    if cfg.dataset.name == "nyu_depth":
-                        if distributed:
-                            pred_raw, variance = model.module(data)
-                            pred_flip_raw, _ = model.module(torch.flip(data, [3]))
-                        else:
-                            pred_raw, variance = model(data)
-                            pred_flip_raw, _ = model(torch.flip(data, [3]))
-                        pred_flip = torch.flip(pred_flip_raw, [3])
-                        mean = 0.5 * (pred_raw + pred_flip)
+                    # --- TTA: Disabled to match Reference Logic ---
+                    if distributed:
+                        mean, variance = model.module(data)
                     else:
-                        if distributed:
-                            mean, variance = model.module(data)
-                        else:
-                            mean, variance = model(data)
+                        mean, variance = model(data)
+
+                    # [Deleted TTA Flip Logic]
 
                     # Metric Calculation
                     interpolate = cfg.dataset.name == "nyu_depth" or target.dim() == 4
                     mean_for_loss = mean
                     if cfg.dataset.name == "nyu_depth":
-                        mean_for_loss = pred_raw
+                        mean_for_loss = mean
                     if cfg.dataset.name == "nyu_depth":
                         min_d = cfg.dataset.get("min_depth_eval", cfg.dataset.get("min_depth", 1e-3))
                         mask = target > min_d

@@ -3,9 +3,9 @@ defaults:
   - model: mlp           # or depth_unet
 
 hyperparameters:
-  lr: 1e-3
-  batch_size: 128
-  eval_batch_size: 2
+  lr: 3.57e-4
+  batch_size: 16
+  eval_batch_size: 1
   epochs: 100
   num_workers: 0
   weight_decay: 0.1

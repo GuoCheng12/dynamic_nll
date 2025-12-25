@@ -77,8 +77,7 @@ class DepthUNet(nn.Module):
         
         # Init Offsets (Critical for NLL convergence)
         # Using Log(Exp(x)-1) inverse to match softplus
-        initial_mean = 1.5 # Start slightly higher than 1.0 to be safe
-        self.init_mean_offset = math.log(math.exp(initial_mean - self.min_val) - 1)
+        initial_mean = 1.0 # Aligned with Reference
         
         self.min_var = 1e-6
         initial_var = 1.0
