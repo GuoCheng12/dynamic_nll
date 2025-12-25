@@ -16,8 +16,8 @@ try:
     from torchvision.transforms import functional as TF
 except ImportError as exc:  # pragma: no cover
     raise ImportError("torchvision is required for NYUDepthDataset") from exc
-
-
+    
+class NYUDepthDataset(Dataset):
     def __init__(
         self,
         data_path: str,
