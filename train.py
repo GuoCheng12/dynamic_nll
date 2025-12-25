@@ -163,7 +163,26 @@ def main(cfg: DictConfig) -> None:
         for batch in iterator:
             data, target = batch
             data, target = data.to(device), target.to(device)
-
+            if global_step == 0 and rank == 0:
+            print("\n[DEBUG DIAGNOSIS] ===============================")
+            print(f"1. Target (GT) Stats:")
+            print(f"   Min: {target.min().item():.4f}, Max: {target.max().item():.4f}, Mean: {target.mean().item():.4f}")
+            if target.mean() > 100:
+                print("   [WARNING] GT seems to be in MILLIMETERS (>100). Model expects METERS.")
+            
+            print(f"2. Input Image Stats:")
+            print(f"   Min: {data.min().item():.4f}, Max: {data.max().item():.4f}, Mean: {data.mean().item():.4f}")
+            if data.min() >= 0 and data.max() > 1.0:
+                print("   [WARNING] Input seems to be 0-255 or 0-1 un-normalized. EfficientNet needs ImageNet Normalization.")
+            
+            # 做一次预测看看初始值
+            with torch.no_grad():
+                init_mean, _ = model(data)
+            print(f"3. Model Initial Prediction:")
+            print(f"   Min: {init_mean.min().item():.4f}, Max: {init_mean.max().item():.4f}, Mean: {init_mean.mean().item():.4f}")
+            
+            print("=================================================\n")
+            
             criterion.beta = epoch_beta
 
             mean, variance = model(data)
