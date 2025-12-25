@@ -1,6 +1,6 @@
 defaults:
-  - dataset: uci_energy  # or nyu_depth, vae_mnist
-  - model: mlp           # or depth_unet
+  - dataset: nyu_depth  # or nyu_depth, vae_mnist
+  - model: depth_unet           # or depth_unet
 
 hyperparameters:
   lr: 3.57e-4
@@ -12,10 +12,10 @@ hyperparameters:
 
 uncertainty:
   loss_type: "beta_nll"
-  beta_strategy: "linear_decay"  # Options: constant, linear_decay, cosine, plateau
+  beta_strategy: "constant"  # Options: constant, linear_decay, cosine, plateau
   beta_start: 1.0
-  beta_end: 0.0
-  total_steps: 80
+  beta_end: 1.0
+  total_steps: 100
 
 logging:
   use_wandb: false
