@@ -1,26 +1,52 @@
 defaults:
-  - dataset: nyu_depth  # or nyu_depth, vae_mnist
-  - model: depth_unet           # or depth_unet
+  - _self_
+  - model: depth_unet 
+
+dataset:
+  name: "nyu_depth"
+  train_data_path: "./data/NYUv2/data"
+  train_gt_path: "./data/NYUv2/data"
+  filenames_file: "./train_test_inputs/nyudepthv2_train_files_with_gt.txt"
+  eval_data_path: "./data/NYUv2/official_splits/test/"
+  eval_gt_path: "./data/NYUv2/official_splits/test/"
+  filenames_file_eval: "./train_test_inputs/nyudepthv2_test_files_with_gt.txt"
+  
+  input_height: 416
+  input_width: 544
+  min_depth: 0.001
+  max_depth: 10.0
+  min_depth_eval: 0.001
+  max_depth_eval: 10.0
+  eigen_crop: True  # 对应 --eigen_crop
+
+  do_random_rotate: True # 对应 --do_random_rotate
+  degree: 2.5            # 对应 --degree 2.5
+  
+  batch_size: 16         # [Modified] 从 3 改为 16
+  num_workers: 16
+
+model:
+  name: "depth_unet"
+  encoder: "tf_efficientnet_b5_ap"
+  pretrained: True
+  min_depth: 0.001
+  max_val: 10.0
 
 hyperparameters:
-  lr: 3.57e-4
-  batch_size: 16
+  lr: 0.001              
   eval_batch_size: 1
-  epochs: 100
-  num_workers: 0
-  weight_decay: 0.1
-
+  weight_decay: 0.1      # 对应 --wd 0.1
+  epochs: 50             # 对应 --epochs 25
+  
 uncertainty:
-  loss_type: "beta_nll"
-  beta_strategy: "constant"  # Options: constant, linear_decay, cosine, plateau
+  beta_strategy: "constant" 
   beta_start: 1.0
   beta_end: 1.0
-  total_steps: 100
+  total_steps: 1000      
 
 logging:
-  use_wandb: false
-  project_name: "beta-nll-research"
-  run_name: "${uncertainty.beta_strategy}_${uncertainty.beta_start}_to_${uncertainty.beta_end}"
-
+  use_wandb: True
+  project_name: "nyu_depth_ddp"
+  run_name: "NYU_unet_nll_beta0.5_bs16" 
 seed: 42
 device: auto
