@@ -4,12 +4,12 @@ defaults:
 
 dataset:
   name: "nyu_depth"
-  train_data_path: "./data/NYUv2/data"
-  train_gt_path: "./data/NYUv2/data"
-  filenames_file: "./train_test_inputs/nyudepthv2_train_files_with_gt.txt"
-  eval_data_path: "./data/NYUv2/official_splits/test/"
-  eval_gt_path: "./data/NYUv2/official_splits/test/"
-  filenames_file_eval: "./train_test_inputs/nyudepthv2_test_files_with_gt.txt"
+  train_data_path: "/datasets/workspace/dataset/nyu_depth_v2/sync"
+  train_gt_path: "/datasets/workspace/dataset/nyu_depth_v2/sync"
+  filenames_file: "/datasets/workspace/dynamic_nll/configs/dataset/nyudepthv2_train_files_with_gt.txt"
+  eval_data_path: "/datasets/workspace/dataset/nyu_depth_v2/official_splits"
+  eval_gt_path: "/datasets/workspace/dataset/nyu_depth_v2/official_splits"
+  filenames_file_eval: "/datasets/workspace/dynamic_nll/configs/dataset/nyudepthv2_test_files_with_gt.txt"
   
   input_height: 416
   input_width: 544
@@ -33,10 +33,11 @@ model:
   max_val: 10.0
 
 hyperparameters:
-  lr: 0.001              
+  lr: 1e-3           
   eval_batch_size: 1
-  weight_decay: 0.1      # 对应 --wd 0.1
-  epochs: 50             # 对应 --epochs 25
+  weight_decay: 0.1      
+  epochs: 50             
+  checkpoint_interval: 5 
   
 uncertainty:
   beta_strategy: "constant" 
@@ -47,6 +48,6 @@ uncertainty:
 logging:
   use_wandb: True
   project_name: "nyu_depth_ddp"
-  run_name: "NYU_unet_nll_beta0.5_bs16" 
+  run_name: "NYU_unet_nll_beta1.0_bs16" 
 seed: 42
 device: auto
