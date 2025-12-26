@@ -5,18 +5,10 @@ import math
 import sys
 import os
 
-# ==============================================================================
-# 1. 环境配置：加载本地 geffnet 库
-# ==============================================================================
-
-# 获取当前文件 (src/models/depth_unet.py) 的绝对路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
-# 推导项目根目录 (假设当前在 src/models，向上两级到达项目根目录)
 project_root = os.path.dirname(os.path.dirname(current_dir))
-# 拼接 third_party/gen-efficientnet-pytorch 的路径
 geffnet_path = os.path.join(project_root, 'third_party', 'gen-efficientnet-pytorch')
 
-# 将该路径加入 python 搜索路径，以便 import geffnet
 if geffnet_path not in sys.path:
     sys.path.append(geffnet_path)
 
@@ -28,10 +20,6 @@ except ImportError:
     print(f"Please ensure you have cloned the repo into: {geffnet_path}")
     print("Command: git clone https://github.com/rwightman/gen-efficientnet-pytorch.git third_party/gen-efficientnet-pytorch\n")
     raise
-
-# ==============================================================================
-# 2. 原作者的辅助类 (完全复刻，保证结构一致)
-# ==============================================================================
 
 class UpSampleBN(nn.Module):
     def __init__(self, skip_input, output_features):
@@ -67,7 +55,6 @@ class DecoderBN(nn.Module):
 
     def forward(self, features):
         # [Correct Indices for geffnet / Original Author]
-        # 这对应的是 gen-efficientnet-pytorch 的层级结构
         x_block0, x_block1, x_block2, x_block3, x_block4 = features[4], features[5], features[6], features[8], features[11]
 
         x_d0 = self.conv2(x_block4)
@@ -104,9 +91,7 @@ class DepthUNet(nn.Module):
         super(DepthUNet, self).__init__()
         self.min_val = min_depth
         self.max_val = max_val
-        
-        # --- Init Offsets for Softplus ---
-        # 确保初始输出均值在 1.5 左右，方差在 1.0 左右
+
         initial_mean = 1.0
         self.init_mean_offset = math.log(math.exp(initial_mean - self.min_val) - 1)
         
@@ -115,59 +100,42 @@ class DepthUNet(nn.Module):
         self.init_var_offset = math.log(math.exp(initial_var - self.min_var) - 1)
         self.max_var = 10.0 
 
-        # --- Load Backbone (Offline) ---
         print(f"[DepthUNet] Initializing backbone: {encoder}")
         
-        # 1. 创建模型结构 (pretrained=False, 因为我们要手动加载文件)
-        # 注意：这里使用的是本地 import 的 geffnet
         basemodel = geffnet.create_model(encoder, pretrained=False)
         
-        # 2. 手动加载本地权重
         if pretrained:
-            # 权重文件硬编码，或者你可以改为传参
-            weights_filename = "tf_efficientnet_b5_ap-9e82e2b5.pth"
+            weights_filename = "tf_efficientnet_b5_ap-9e82fae8.pth"
             weights_path = os.path.join(project_root, 'pretrained_weights', weights_filename)
             
+            print(f"[DepthUNet] Attempting to load weights from: {os.path.abspath(weights_path)}")
+            
             if os.path.exists(weights_path):
-                print(f"[DepthUNet] Loading local weights from: {weights_path}")
+                print(f"[DepthUNet] ✅ Found file. Loading state_dict...")
                 state_dict = torch.load(weights_path, map_location='cpu')
-                # strict=True 保证所有 key 完美匹配，如果不匹配会报错，帮我们发现问题
                 basemodel.load_state_dict(state_dict, strict=True)
+                print(f"[DepthUNet] ✅ Weights loaded successfully.")
             else:
-                print(f"[DepthUNet] WARNING: Weights file not found at: {weights_path}")
-                print("[DepthUNet] Initializing with RANDOM weights. Metrics will be bad initially.")
-                # 如果你想强制必须有权重，这里可以 raise FileNotFoundError
+                raise FileNotFoundError(f"❌ CRITICAL ERROR: Weight file not found at: {weights_path}")
 
-        # Remove last layers (Classification Head)
+        # Remove last layers
         basemodel.global_pool = nn.Identity()
         basemodel.classifier = nn.Identity()
         
-        # Wrap with Author's Encoder
         self.encoder = Encoder(basemodel)
-        
-        # Decoder (output 128 channels)
         self.decoder = DecoderBN(num_classes=128)
-        
-        # Prediction Head (128 -> 2 channels: Mean, Variance)
         self.conv_out = nn.Sequential(
             nn.Conv2d(128, 2, kernel_size=1, stride=1, padding=0),
         )
 
     def forward(self, x):
-        # 1. Encoder Pass
         enc_feats = self.encoder(x)
-        
-        # 2. Decoder Pass
         unet_out = self.decoder(enc_feats)
-        
-        # 3. Head Pass
         out = self.conv_out(unet_out)
         
-        # 4. Upsample to Input Resolution (if needed)
         if out.shape[-2:] != x.shape[-2:]:
             out = F.interpolate(out, size=x.shape[-2:], mode='bilinear', align_corners=True)
             
-        # 5. Split Mean/Var and Apply Constraints
         mean = out[:, :1]
         mean = F.softplus(mean + self.init_mean_offset) + self.min_val
         mean = torch.clamp(mean, self.min_val, self.max_val)
@@ -179,11 +147,9 @@ class DepthUNet(nn.Module):
         return mean, var
 
     def get_1x_lr_params(self):
-        """返回 Backbone 的参数迭代器 (用于 0.1x LR)"""
         return self.encoder.parameters()
 
     def get_10x_lr_params(self):
-        """返回 Decoder 和 Head 的参数迭代器 (用于 1.0x LR)"""
         modules = [self.decoder, self.conv_out]
         for m in modules:
             yield from m.parameters()
