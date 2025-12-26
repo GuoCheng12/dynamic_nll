@@ -364,6 +364,14 @@ def main(cfg: DictConfig) -> None:
             if cfg.logging.use_wandb and wandb is not None:
                 wandb.log(val_log, step=global_step)
 
+            checkpoint_interval = cfg.hyperparameters.get("checkpoint_interval", 0)
+            if checkpoint_interval and (epoch + 1) % checkpoint_interval == 0:
+                run_dir = HydraConfig.get().runtime.output_dir
+                ckpt_path = os.path.join(run_dir, f"checkpoint_epoch_{epoch + 1}.pt")
+                state = model.module.state_dict() if distributed else model.state_dict()
+                torch.save({"model": state, "epoch": epoch + 1}, ckpt_path)
+                print(f"Saved checkpoint to {ckpt_path}")
+
     # --- 7. Cleanup ---
     if rank == 0 and cfg.logging.use_wandb and wandb is not None:
         wandb.finish()
