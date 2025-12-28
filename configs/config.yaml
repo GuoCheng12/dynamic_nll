@@ -17,12 +17,12 @@ dataset:
   max_depth: 10.0
   min_depth_eval: 0.001
   max_depth_eval: 10.0
-  eigen_crop: True  # 对应 --eigen_crop
+  eigen_crop: True 
 
-  do_random_rotate: True # 对应 --do_random_rotate
-  degree: 2.5            # 对应 --degree 2.5
+  do_random_rotate: True #
+  degree: 2.5            
   
-  batch_size: 16         # [Modified] 从 3 改为 16
+  batch_size: 16         
   num_workers: 16
 
 model:
@@ -33,16 +33,18 @@ model:
   max_val: 10.0
 
 hyperparameters:
-  lr: 1e-3           
+  lr: 1e-3
   eval_batch_size: 1
-  weight_decay: 0.1      
-  epochs: 50             
-  checkpoint_interval: 5 
-  
+  weight_decay: 0.1
+  epochs: 25
+  checkpoint_interval: 5
+  div_factor: 25.0
+  final_div_factor: 100.0
+
 uncertainty:
-  beta_strategy: "constant" 
-  beta_start: 1.0
-  beta_end: 1.0
+  beta_strategy: "constant"
+  beta_start: 0.5
+  beta_end: 0.5
   total_steps: 1000      
 
 logging:
