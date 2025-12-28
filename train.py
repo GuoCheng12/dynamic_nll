@@ -130,8 +130,8 @@ def main(cfg: DictConfig) -> None:
         cycle_momentum=True,
         base_momentum=0.85,
         max_momentum=0.95,
-        div_factor=25,
-        final_div_factor=100,
+        div_factor=cfg.hyperparameters.get("div_factor", 25.0),
+        final_div_factor=cfg.hyperparameters.get("final_div_factor", 100.0),
     )
     if rank == 0 and cfg.logging.use_wandb and wandb is not None:
         wandb.init(
@@ -296,9 +296,9 @@ def main(cfg: DictConfig) -> None:
                         if mean.shape[-2:] != target.shape[-2:]:
                             mean = F.interpolate(mean, size=target.shape[-2:], mode="bilinear", align_corners=True)
                         
-                        # Defensize Unit Check (mm to meters)
-                        if target.max() > 80.0:
-                            target = target / 1000.0
+                        # # Defensize Unit Check (mm to meters)
+                        # if target.max() > 80.0:
+                        #     target = target / 1000.0
 
                         batch_metrics = compute_metrics_per_image(
                             mean,
