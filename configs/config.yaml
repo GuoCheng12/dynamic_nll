@@ -7,10 +7,9 @@ dataset:
   train_data_path: "/datasets/workspace/dataset/nyu_depth_v2/sync"
   train_gt_path: "/datasets/workspace/dataset/nyu_depth_v2/sync"
   filenames_file: "/datasets/workspace/dynamic_nll/configs/dataset/nyudepthv2_train_files_with_gt.txt"
-  eval_data_path: "/datasets/workspace/dataset/nyu_depth_v2/official_splits"
-  eval_gt_path: "/datasets/workspace/dataset/nyu_depth_v2/official_splits"
+  eval_data_path: "/datasets/workspace/dataset/nyu_depth_v2/official_splits/test"
+  eval_gt_path: "/datasets/workspace/dataset/nyu_depth_v2/official_splits/test"
   filenames_file_eval: "/datasets/workspace/dynamic_nll/configs/dataset/nyudepthv2_test_files_with_gt.txt"
-  
   input_height: 416
   input_width: 544
   min_depth: 0.001
@@ -33,7 +32,7 @@ model:
   max_val: 10.0
 
 hyperparameters:
-  lr: 1e-3
+  lr: 0.000357 # recommand 1e-3 
   eval_batch_size: 1
   weight_decay: 0.1
   epochs: 25
