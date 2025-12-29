@@ -269,13 +269,20 @@ def main(cfg: DictConfig) -> None:
                 for data, target in val_iter:
                     data, target = data.to(device), target.to(device)
 
-                    # --- TTA: Disabled to match Reference Logic ---
+                    # --- TTA: Enabled to match Reference Evaluate.py ---
+                    # Reference: evaluate.py lines 60-70
+                    image_flip = torch.flip(data, [3])
+                    
                     if distributed:
-                        mean, variance = model.module(data)
+                        pred, var = model.module(data)
+                        pred_flip, var_flip = model.module(image_flip)
                     else:
-                        mean, variance = model(data)
+                        pred, var = model(data)
+                        pred_flip, var_flip = model(image_flip)
 
-                    # [Deleted TTA Flip Logic]
+                    # TTA Average
+                    mean = 0.5 * (pred + torch.flip(pred_flip, [3]))
+                    variance = 0.5 * (var + torch.flip(var_flip, [3]))
 
                     # Metric Calculation
                     interpolate = cfg.dataset.name == "nyu_depth" or target.dim() == 4
