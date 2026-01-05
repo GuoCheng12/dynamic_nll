@@ -6,3 +6,5 @@ AGENTS.md
 depth_estimation/
 pretrained_weights/
 third_party/
+
+nyu_depth_v2_labeled.mat/

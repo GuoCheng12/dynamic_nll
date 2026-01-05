@@ -42,10 +42,9 @@ hyperparameters:
   final_div_factor: 100.0
 
 uncertainty:
-  beta_strategy: "constant"
-  beta_start: 0.0
-  beta_end: 0.0
-  total_steps: 1000      
+  beta_strategy: "linear_decay" # "constant" or "linear_decay" or "delayed_linear" or "cosine" or "plateau"
+  beta_start: 1.0
+  beta_end: 0.2
 
 logging:
   use_wandb: True

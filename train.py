@@ -156,7 +156,21 @@ def main(cfg: DictConfig) -> None:
         else:
             train_accum = torch.zeros(5, device=device)
 
-        epoch_beta = scheduler.get_beta(epoch)
+        if cfg.uncertainty.beta_strategy == "linear_decay":
+            beta_start = cfg.uncertainty.beta_start
+            beta_end = cfg.uncertainty.beta_end
+            total_epochs = max(cfg.hyperparameters.epochs, 1)
+            if total_epochs == 1:
+                epoch_beta = beta_end
+            else:
+                progress = epoch / (total_epochs - 1)
+                epoch_beta = beta_start - progress * (beta_start - beta_end)
+        else:
+            epoch_beta = scheduler.get_beta(epoch)
+        if rank == 0:
+            print(f\"\\n[Epoch {epoch}] Dynamic Beta update: {epoch_beta:.4f}\")
+            if cfg.logging.use_wandb and wandb is not None:
+                wandb.log({\"train/beta\": epoch_beta, \"epoch\": epoch}, commit=False)
 
         iterator = tqdm(train_loader, desc=f"Epoch {epoch+1}/{cfg.hyperparameters.epochs}", leave=False) if rank == 0 else train_loader
         
@@ -364,9 +378,10 @@ def main(cfg: DictConfig) -> None:
                     "val/delta1": vals[3] / total_images,
                     "val/delta2": vals[4] / total_images,
                     "val/delta3": vals[5] / total_images,
+                    "val/nll": val_loss_avg,
                 }
             else:
-                val_log = {"val/loss": val_loss_avg}
+                val_log = {"val/loss": val_loss_avg, "val/nll": val_loss_avg}
             
             if cfg.logging.use_wandb and wandb is not None:
                 wandb.log(val_log, step=global_step)
