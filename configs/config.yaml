@@ -1,6 +1,7 @@
 defaults:
   - _self_
   - model: depth_unet 
+  - dataset: nyu_depth
 
 dataset:
   name: "nyu_depth"
@@ -32,7 +33,7 @@ model:
   max_val: 10.0
 
 hyperparameters:
-  lr: 0.000357 # recommand 1e-3 
+  lr: 6e-3 # recommand 6e-3 for bs=16
   eval_batch_size: 1
   weight_decay: 0.1
   epochs: 25
@@ -42,13 +43,13 @@ hyperparameters:
 
 uncertainty:
   beta_strategy: "constant"
-  beta_start: 0.5
-  beta_end: 0.5
+  beta_start: 0.0
+  beta_end: 0.0
   total_steps: 1000      
 
 logging:
   use_wandb: True
-  project_name: "nyu_depth_ddp"
-  run_name: "NYU_unet_nll_beta1.0_bs16" 
+  project_name: "nyu_depth"
+  run_name: "NYU_unet_nll_beta0.0_bs16" 
 seed: 42
 device: auto

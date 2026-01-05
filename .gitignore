@@ -4,3 +4,5 @@ outputs/
 AGENTS.md
 .pytest_cache/
 depth_estimation/
+pretrained_weights/
+third_party/
