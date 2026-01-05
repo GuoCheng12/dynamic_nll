@@ -98,7 +98,7 @@ def main(cfg: DictConfig) -> None:
         strategy=cfg.uncertainty.beta_strategy,
         start_beta=cfg.uncertainty.beta_start,
         end_beta=cfg.uncertainty.beta_end,
-        total_steps=cfg.uncertainty.total_steps,
+        total_steps=cfg.uncertainty.get("total_steps", cfg.hyperparameters.epochs),
     )
 
     ddp_model = model.module if isinstance(model, DDP) else model
