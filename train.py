@@ -168,9 +168,9 @@ def main(cfg: DictConfig) -> None:
         else:
             epoch_beta = scheduler.get_beta(epoch)
         if rank == 0:
-            print(f"\\n[Epoch {epoch}] Dynamic Beta update: {epoch_beta:.4f}\")
+            print(f"\n[Epoch {epoch}] Dynamic Beta update: {epoch_beta:.4f}")
             if cfg.logging.use_wandb and wandb is not None:
-                wandb.log({"train/beta\": epoch_beta, \"epoch\": epoch}, commit=False)
+                wandb.log({"train/beta": epoch_beta, "epoch": epoch}, commit=False)
 
         iterator = tqdm(train_loader, desc=f"Epoch {epoch+1}/{cfg.hyperparameters.epochs}", leave=False) if rank == 0 else train_loader
         
