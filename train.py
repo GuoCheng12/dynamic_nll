@@ -156,15 +156,22 @@ def main(cfg: DictConfig) -> None:
         else:
             train_accum = torch.zeros(5, device=device)
 
+        beta_start = cfg.uncertainty.beta_start
+        beta_end = cfg.uncertainty.beta_end
+        total_epochs = max(cfg.hyperparameters.epochs, 1)
         if cfg.uncertainty.beta_strategy == "linear_decay":
-            beta_start = cfg.uncertainty.beta_start
-            beta_end = cfg.uncertainty.beta_end
-            total_epochs = max(cfg.hyperparameters.epochs, 1)
             if total_epochs == 1:
                 epoch_beta = beta_end
             else:
                 progress = epoch / (total_epochs - 1)
                 epoch_beta = beta_start - progress * (beta_start - beta_end)
+        elif cfg.uncertainty.beta_strategy == "cosine":
+            if total_epochs == 1:
+                epoch_beta = beta_end
+            else:
+                epoch_beta = beta_end + 0.5 * (beta_start - beta_end) * (
+                    1.0 + math.cos((epoch / total_epochs) * math.pi)
+                )
         else:
             epoch_beta = scheduler.get_beta(epoch)
         if rank == 0:
