@@ -1,0 +1,50 @@
+dataset: paper_sine
+methods:
+  - faithful
+  - adaptive_faithful_lambda
+  - adaptive_faithful_lambda_gamma
+  - dynamic_beta
+  - closed_loop_beta_only
+  - closed_loop_beta_gamma
+fixed_betas:
+  - 0.0
+  - 0.5
+  - 1.0
+out_root: outputs/paper_sine_main_compare
+epochs: 300
+batch_size: 128
+eval_batch_size: 512
+lr: 0.001
+weight_decay: 0.0
+num_workers: 0
+checkpoint_interval: 0
+dataset_size: 500
+beta_start: 1.0
+beta_end: 0.0
+current_dynamic_strategy: linear_decay
+faithful_lambda_strategy: linear_decay
+faithful_lambda_start: 0.0
+faithful_lambda_end: 1.0
+controller_signal: gradient
+controller_update_interval: 25
+controller_warmup_epochs: 100
+controller_beta_min: 0.2
+controller_beta_max: 1.0
+controller_gamma_min: 0.0
+controller_gamma_max: 1.0
+controller_beta_step: 0.1
+controller_gamma_step: 0.1
+controller_collapse_thresh: 0.02
+controller_align_thresh: 0.30
+controller_rmse_plateau_thresh: 0.005
+controller_grad_ratio_thresh: 1.5
+controller_grad_cosine_thresh: 0.0
+controller_gamma_release_beta_thresh: 0.6
+project_name: uncertainty_compare
+use_wandb: false
+seeds:
+  - 42
+  - 43
+  - 44
+extra_override:
+  - device=cuda

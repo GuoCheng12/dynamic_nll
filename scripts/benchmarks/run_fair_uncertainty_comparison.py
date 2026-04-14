@@ -22,6 +22,19 @@ from src.utils import evaluate_head_tail, expected_calibration_error, get_device
 from train import instantiate_model
 
 
+def load_cli_config(argv: list[str]) -> dict:
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--config", type=str, default=None)
+    known_args, _ = pre_parser.parse_known_args(argv)
+    if not known_args.config:
+        return {}
+
+    config = OmegaConf.to_container(OmegaConf.load(known_args.config), resolve=True)
+    if not isinstance(config, dict):
+        raise ValueError(f"Benchmark config must be a mapping: {known_args.config}")
+    return config
+
+
 def run_training(run_dir: Path, overrides: list[str]) -> None:
     if run_dir.exists():
         shutil.rmtree(run_dir)
@@ -393,9 +406,13 @@ def print_summary(dataset: str, summary: Dict[str, Dict[str, Dict[str, float]]],
 
 
 def main() -> None:
+    argv = sys.argv[1:]
+    config_defaults = load_cli_config(argv)
+
     parser = argparse.ArgumentParser(
         description="Run a fair comparison between linear beta, cosine beta, and Faithful objectives."
     )
+    parser.add_argument("--config", type=str, default=None, help="YAML config file for benchmark defaults.")
     parser.add_argument("--dataset", choices=["toy_regression", "paper_sine"], default="toy_regression")
     parser.add_argument(
         "--methods",
@@ -453,7 +470,9 @@ def main() -> None:
     parser.add_argument("--use-wandb", action="store_true")
     parser.add_argument("--seeds", nargs="+", type=int, default=[42])
     parser.add_argument("--extra-override", action="append", default=[], help="Extra Hydra override shared by all runs.")
-    args = parser.parse_args()
+    if config_defaults:
+        parser.set_defaults(**config_defaults)
+    args = parser.parse_args(argv)
 
     out_root = Path(args.out_root)
     out_root.mkdir(parents=True, exist_ok=True)
