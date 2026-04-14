@@ -1,5 +1,4 @@
 name: paper_sine
 n_samples: 500
-input_dim: 1
-output_dim: 1
-beta_nll_ref: true
+val_samples: 500
+test_samples: 500

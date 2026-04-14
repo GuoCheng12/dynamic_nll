@@ -128,7 +128,9 @@ class DepthUNet(nn.Module):
             nn.Conv2d(128, 2, kernel_size=1, stride=1, padding=0),
         )
 
-    def forward(self, x):
+    def forward(self, x, faithful: bool = False):
+        if faithful:
+            raise NotImplementedError("Faithful objective is currently implemented for MLPRegressor only.")
         enc_feats = self.encoder(x)
         unet_out = self.decoder(enc_feats)
         out = self.conv_out(unet_out)

@@ -50,6 +50,8 @@ class ToyRegressionDataset(Dataset):
 def build_dataloaders(
     batch_size: int,
     splits=(0.8, 0.1, 0.1),
+    size: int = 5000,
+    normalize: bool = True,
     seed: int | None = None,
     distributed: bool = False,
     rank: int = 0,
@@ -62,7 +64,7 @@ def build_dataloaders(
         eval_distributed = distributed
     if eval_batch_size is None:
         eval_batch_size = batch_size
-    dataset = ToyRegressionDataset()
+    dataset = ToyRegressionDataset(size=size, normalize=normalize)
     n = len(dataset)
     train_len = int(splits[0] * n)
     val_len = int(splits[1] * n)

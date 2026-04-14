@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import numpy as np
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
 
 
 class PaperSineDataset(Dataset):
@@ -34,3 +37,68 @@ class PaperSineDataset(Dataset):
 
     def get_true_variance(self):
         return self.true_var
+
+
+def build_paper_sine_dataloaders(
+    data_cfg,
+    batch_size: int,
+    seed: int | None = None,
+    distributed: bool = False,
+    rank: int = 0,
+    world_size: int = 1,
+    eval_distributed: bool | None = None,
+    num_workers: int = 0,
+    eval_batch_size: int | None = None,
+):
+    if eval_distributed is None:
+        eval_distributed = distributed
+    if eval_batch_size is None:
+        eval_batch_size = batch_size
+
+    n_samples = data_cfg.get("n_samples", 500)
+    val_samples = data_cfg.get("val_samples", n_samples)
+    test_samples = data_cfg.get("test_samples", n_samples)
+    base_seed = 0 if seed is None else seed
+
+    train_ds = PaperSineDataset(n_samples=n_samples, mode="train", seed=base_seed)
+    val_ds = PaperSineDataset(n_samples=val_samples, mode="train", seed=base_seed + 1)
+    test_ds = PaperSineDataset(n_samples=test_samples, mode="test", seed=base_seed + 2)
+
+    train_sampler = (
+        DistributedSampler(train_ds, num_replicas=world_size, rank=rank, shuffle=True)
+        if distributed
+        else None
+    )
+    val_sampler = (
+        DistributedSampler(val_ds, num_replicas=world_size, rank=rank, shuffle=False)
+        if eval_distributed
+        else None
+    )
+    test_sampler = (
+        DistributedSampler(test_ds, num_replicas=world_size, rank=rank, shuffle=False)
+        if eval_distributed
+        else None
+    )
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
+        num_workers=num_workers,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=eval_batch_size,
+        shuffle=False,
+        sampler=val_sampler,
+        num_workers=num_workers,
+    )
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=eval_batch_size,
+        shuffle=False,
+        sampler=test_sampler,
+        num_workers=num_workers,
+    )
+    return train_loader, val_loader, test_loader

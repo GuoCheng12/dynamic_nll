@@ -73,6 +73,63 @@ def grad_norms(model: torch.nn.Module) -> Dict[str, float]:
     return norms
 
 
+def gradient_probe_stats(
+    model: torch.nn.Module,
+    data: torch.Tensor,
+    target: torch.Tensor,
+) -> Dict[str, float]:
+    backbone = getattr(model, "backbone", None)
+    if backbone is None:
+        return {
+            "mean_grad_norm": 0.0,
+            "var_grad_norm": 0.0,
+            "grad_ratio": 0.0,
+            "grad_cosine": 0.0,
+        }
+
+    params = [param for param in backbone.parameters() if param.requires_grad]
+    if not params:
+        return {
+            "mean_grad_norm": 0.0,
+            "var_grad_norm": 0.0,
+            "grad_ratio": 0.0,
+            "grad_cosine": 0.0,
+        }
+
+    def flatten(grads: Iterable[torch.Tensor | None]) -> torch.Tensor | None:
+        pieces = [grad.detach().reshape(-1) for grad in grads if grad is not None]
+        if not pieces:
+            return None
+        return torch.cat(pieces)
+
+    was_training = model.training
+    model.eval()
+    mean, variance = model(data, faithful=False, variance_trunk_scale=1.0)
+    mean_loss = 0.5 * torch.mean((target - mean) ** 2)
+    var_loss = 0.5 * torch.mean(((target - mean.detach()) ** 2) / variance + torch.log(variance))
+    mean_grads = torch.autograd.grad(mean_loss, params, retain_graph=True, allow_unused=True)
+    var_grads = torch.autograd.grad(var_loss, params, allow_unused=True)
+    if was_training:
+        model.train()
+
+    mean_vec = flatten(mean_grads)
+    var_vec = flatten(var_grads)
+    mean_norm = 0.0 if mean_vec is None else torch.linalg.norm(mean_vec).item()
+    var_norm = 0.0 if var_vec is None else torch.linalg.norm(var_vec).item()
+
+    if mean_vec is None or var_vec is None or mean_norm <= 1e-12 or var_norm <= 1e-12:
+        grad_cosine = 0.0
+    else:
+        grad_cosine = torch.dot(mean_vec, var_vec).item() / max(mean_norm * var_norm, 1e-12)
+
+    return {
+        "mean_grad_norm": mean_norm,
+        "var_grad_norm": var_norm,
+        "grad_ratio": var_norm / max(mean_norm, 1e-12),
+        "grad_cosine": grad_cosine,
+    }
+
+
 def evaluate_head_tail(
     model: torch.nn.Module,
     dataset,

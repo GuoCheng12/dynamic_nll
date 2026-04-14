@@ -1,0 +1,7 @@
+name: toy_regression
+size: 5000
+normalize: true
+split:
+  train: 0.8
+  val: 0.1
+  test: 0.1

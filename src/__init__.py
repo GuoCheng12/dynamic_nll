@@ -4,7 +4,7 @@ Dynamic β-NLL Uncertainty Estimation Framework package.
 
 from .data import PaperSineDataset, ToyRegressionDataset, build_dataloaders
 from .models import MLPRegressor
-from .modules import BetaScheduler, GaussianLogLikelihoodLoss
+from .modules import BetaScheduler, FaithfulHeteroscedasticLoss, GaussianLogLikelihoodLoss
 
 __all__ = [
     "PaperSineDataset",
@@ -12,5 +12,6 @@ __all__ = [
     "build_dataloaders",
     "MLPRegressor",
     "BetaScheduler",
+    "FaithfulHeteroscedasticLoss",
     "GaussianLogLikelihoodLoss",
 ]

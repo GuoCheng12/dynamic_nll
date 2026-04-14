@@ -50,6 +50,48 @@ class GaussianLogLikelihoodLoss(nn.Module):
         return -torch.mean(ll)
 
 
+class FaithfulHeteroscedasticLoss(nn.Module):
+    """
+    Faithful objective:
+        0.5 * MSE(y, mu(x)) + lambda_t * NLL(y; sg(mu(x)), sigma^2(sg(z)))
+    where z are trunk features and the stop-gradient over z is handled by the model.
+    """
+
+    def __init__(self, lambda_weight: float = 0.0, mse_weight: float = 0.5):
+        super().__init__()
+        self.name = "Faithful"
+        self.lambda_weight = lambda_weight
+        self.mse_weight = mse_weight
+        self.nll_loss = GaussianLogLikelihoodLoss(beta=0.0)
+
+    def forward(self, input, target, mask=None, interpolate=True, variance=None):
+        if variance is None:
+            raise ValueError("FaithfulHeteroscedasticLoss requires a variance prediction.")
+
+        if interpolate:
+            input = nn.functional.interpolate(
+                input, target.shape[-2:], mode="bilinear", align_corners=True
+            )
+            variance = nn.functional.interpolate(
+                variance, target.shape[-2:], mode="bilinear", align_corners=True
+            )
+
+        if mask is not None:
+            input = input[mask]
+            target = target[mask]
+            variance = variance[mask]
+
+        mse_term = self.mse_weight * torch.mean((target - input) ** 2)
+        nll_term = self.nll_loss(
+            input.detach(),
+            target,
+            mask=None,
+            interpolate=False,
+            variance=variance,
+        )
+        return mse_term + self.lambda_weight * nll_term
+
+
 class BetaScheduler:
     """
     Handles beta scheduling strategies for Beta-NLL.
@@ -70,22 +112,31 @@ class BetaScheduler:
         self.warmup_steps = max(warmup_steps, 0)
         self.best_loss = float("inf")
 
+    def _progress(self, current_step: int) -> float:
+        step = max(current_step, 0)
+        if self.strategy == "delayed_linear":
+            if step < self.warmup_steps:
+                return 0.0
+            effective = step - self.warmup_steps
+            total = max(self.total_steps - self.warmup_steps - 1, 1)
+            return min(effective / total, 1.0)
+        total = max(self.total_steps - 1, 1)
+        return min(step / total, 1.0)
+
     def get_beta(self, current_step: int, current_loss: float | None = None) -> float:
         step = max(current_step, 0)
         if self.strategy == "constant":
             return self.start_beta
         if self.strategy == "linear_decay":
-            progress = min(step / self.total_steps, 1.0)
+            progress = self._progress(step)
             return self.start_beta + progress * (self.end_beta - self.start_beta)
         if self.strategy == "delayed_linear":
             if step < self.warmup_steps:
                 return self.start_beta
-            effective = step - self.warmup_steps
-            total = max(self.total_steps - self.warmup_steps, 1)
-            progress = min(effective / total, 1.0)
+            progress = self._progress(step)
             return self.start_beta + progress * (self.end_beta - self.start_beta)
         if self.strategy == "cosine":
-            progress = min(step / self.total_steps, 1.0)
+            progress = self._progress(step)
             cosine = 0.5 * (1 + np.cos(np.pi * progress))
             return self.end_beta + (self.start_beta - self.end_beta) * cosine
         if self.strategy == "plateau":
@@ -94,9 +145,7 @@ class BetaScheduler:
                 if current_loss < self.best_loss:
                     self.best_loss = current_loss
                 else:
-                    decay = (self.end_beta - self.start_beta) * min(
-                        step / self.total_steps, 1.0
-                    )
+                    decay = (self.end_beta - self.start_beta) * self._progress(step)
                     return self.start_beta + decay
             return self.start_beta
         return self.end_beta

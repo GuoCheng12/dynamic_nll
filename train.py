@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import math
 import os
 from typing import Any, Dict, Optional
@@ -11,12 +13,25 @@ from omegaconf import DictConfig, OmegaConf
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 
-from src.data import build_dataloaders, build_nyu_dataloaders
-from src.depth_metrics import compute_metrics_per_image
-from src.modules import BetaScheduler, GaussianLogLikelihoodLoss
-from src.models import DepthUNet, MLPRegressor
-from src.utils import get_device, grad_norms, mae, nll, rmse, set_seed
 from hydra.core.hydra_config import HydraConfig
+
+from src.data import build_dataloaders, build_nyu_dataloaders, build_paper_sine_dataloaders
+from src.depth_metrics import compute_metrics_per_image
+from src.modules import (
+    BetaScheduler,
+    ClosedLoopCouplingController,
+    FaithfulHeteroscedasticLoss,
+    GaussianLogLikelihoodLoss,
+)
+from src.models import MLPRegressor
+from src.toy_reporting import (
+    compute_toy_epoch_statistics,
+    plot_toy_history,
+    plot_toy_predictions,
+    save_toy_history_artifacts,
+    summarize_toy_history,
+)
+from src.utils import get_device, grad_norms, gradient_probe_stats, mae, nll, rmse, set_seed
 
 try:
     import wandb
@@ -33,6 +48,8 @@ def instantiate_model(cfg: DictConfig) -> torch.nn.Module:
             dropout=cfg.model.get("dropout", 0.0),
         )
     if cfg.model.name == "depth_unet":
+        from src.models.depth_unet import DepthUNet
+
         return DepthUNet(
             encoder=cfg.model.encoder,
             pretrained=cfg.model.pretrained,
@@ -49,6 +66,126 @@ def compute_metrics(mean: torch.Tensor, var: torch.Tensor, target: torch.Tensor)
         "rmse": rmse(mean, target),
         "nll": nll(mean, target, var),
     }
+
+
+def get_loss_type(cfg: DictConfig) -> str:
+    return cfg.uncertainty.get("loss_type", cfg.uncertainty.get("objective", "beta_nll"))
+
+
+def get_split_tuple(dataset_cfg: DictConfig) -> tuple[float, float, float]:
+    split_cfg = dataset_cfg.get("split")
+    if split_cfg is None:
+        return 0.8, 0.1, 0.1
+    return float(split_cfg.train), float(split_cfg.val), float(split_cfg.test)
+
+
+def build_loaders(
+    cfg: DictConfig,
+    distributed: bool,
+    rank: int,
+    world_size: int,
+    eval_distributed: bool,
+):
+    if cfg.dataset.name == "nyu_depth":
+        return build_nyu_dataloaders(
+            cfg.dataset,
+            distributed=distributed,
+            rank=rank,
+            world_size=world_size,
+            eval_distributed=eval_distributed,
+        )
+
+    common_kwargs = {
+        "batch_size": cfg.hyperparameters.batch_size,
+        "seed": cfg.seed,
+        "distributed": distributed,
+        "rank": rank,
+        "world_size": world_size,
+        "eval_distributed": eval_distributed,
+        "num_workers": cfg.hyperparameters.get("num_workers", 0),
+        "eval_batch_size": cfg.hyperparameters.get("eval_batch_size", cfg.hyperparameters.batch_size),
+    }
+    if cfg.dataset.name == "paper_sine":
+        train_loader, val_loader, test_loader = build_paper_sine_dataloaders(cfg.dataset, **common_kwargs)
+    else:
+        train_loader, val_loader, test_loader = build_dataloaders(
+            splits=get_split_tuple(cfg.dataset),
+            size=cfg.dataset.get("size", 5000),
+            normalize=cfg.dataset.get("normalize", True),
+            **common_kwargs,
+        )
+    return train_loader, val_loader, getattr(train_loader, "sampler", None), getattr(val_loader, "sampler", None)
+
+
+def build_objective(cfg: DictConfig, supports_gamma: bool):
+    loss_type = get_loss_type(cfg)
+    controller_cfg = cfg.uncertainty.get("controller")
+    faithful_trunk_detach = loss_type == "faithful"
+    if controller_cfg and controller_cfg.get("enabled", False):
+        if cfg.dataset.name not in {"toy_regression", "paper_sine"}:
+            raise ValueError("Closed-loop controller is only supported for toy_regression and paper_sine runs.")
+        if loss_type == "faithful":
+            criterion = FaithfulHeteroscedasticLoss(lambda_weight=controller_cfg.beta_max)
+            schedule_name = "faithful_lambda"
+            if controller_cfg.mode == "beta_gamma" and supports_gamma:
+                fixed_gamma_t = controller_cfg.get("fixed_gamma_t")
+                faithful_trunk_detach = fixed_gamma_t is not None and float(fixed_gamma_t) <= 0.0
+            else:
+                fixed_gamma_t = 0.0
+                faithful_trunk_detach = True
+        elif loss_type == "beta_nll":
+            criterion = GaussianLogLikelihoodLoss(beta=controller_cfg.beta_max)
+            schedule_name = "beta"
+            fixed_gamma_t = controller_cfg.get("fixed_gamma_t")
+            faithful_trunk_detach = False
+        else:
+            raise ValueError(f"Unsupported uncertainty.loss_type: {loss_type}")
+        controller = ClosedLoopCouplingController(
+            mode=controller_cfg.mode,
+            signal=controller_cfg.get("signal", "metrics"),
+            update_interval=controller_cfg.update_interval,
+            warmup_epochs=controller_cfg.warmup_epochs,
+            beta_min=controller_cfg.beta_min,
+            beta_max=controller_cfg.beta_max,
+            gamma_min=controller_cfg.gamma_min,
+            gamma_max=controller_cfg.gamma_max,
+            beta_step=controller_cfg.beta_step,
+            gamma_step=controller_cfg.gamma_step,
+            collapse_thresh=controller_cfg.collapse_thresh,
+            align_thresh=controller_cfg.align_thresh,
+            rmse_plateau_thresh=controller_cfg.rmse_plateau_thresh,
+            grad_ratio_thresh=controller_cfg.get("grad_ratio_thresh", 1.0),
+            grad_cosine_thresh=controller_cfg.get("grad_cosine_thresh", 0.0),
+            gamma_release_beta_thresh=controller_cfg.get("gamma_release_beta_thresh", 0.6),
+            supports_gamma=supports_gamma,
+            fixed_gamma_t=None if fixed_gamma_t is None else float(fixed_gamma_t),
+        )
+        return loss_type, criterion, None, schedule_name, controller, faithful_trunk_detach
+
+    total_steps = cfg.uncertainty.get("total_steps", cfg.hyperparameters.epochs)
+    if loss_type == "faithful":
+        criterion = FaithfulHeteroscedasticLoss(
+            lambda_weight=cfg.uncertainty.get("faithful_lambda_start", 0.0)
+        )
+        scheduler = BetaScheduler(
+            strategy=cfg.uncertainty.get("faithful_lambda_strategy", "linear_decay"),
+            start_beta=cfg.uncertainty.get("faithful_lambda_start", 0.0),
+            end_beta=cfg.uncertainty.get("faithful_lambda_end", 1.0),
+            total_steps=total_steps,
+        )
+        schedule_name = "faithful_lambda"
+    elif loss_type == "beta_nll":
+        criterion = GaussianLogLikelihoodLoss()
+        scheduler = BetaScheduler(
+            strategy=cfg.uncertainty.beta_strategy,
+            start_beta=cfg.uncertainty.beta_start,
+            end_beta=cfg.uncertainty.beta_end,
+            total_steps=total_steps,
+        )
+        schedule_name = "beta"
+    else:
+        raise ValueError(f"Unsupported uncertainty.loss_type: {loss_type}")
+    return loss_type, criterion, scheduler, schedule_name, None, faithful_trunk_detach
 
 
 @hydra.main(config_path="configs", config_name="config", version_base=None)
@@ -72,36 +209,20 @@ def main(cfg: DictConfig) -> None:
         model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
         model = DDP(model, device_ids=[local_rank], find_unused_parameters=True)
 
-    eval_distributed = False 
-    
-    if cfg.dataset.name == "nyu_depth":
-        train_loader, val_loader, train_sampler, val_sampler = build_nyu_dataloaders(
-            cfg.dataset, distributed=distributed, rank=rank, world_size=world_size, 
-            eval_distributed=eval_distributed 
-        )
-    else:
-        train_loader, val_loader, _ = build_dataloaders(
-            cfg.hyperparameters.batch_size,
-            seed=cfg.seed,
-            distributed=distributed,
-            rank=rank,
-            world_size=world_size,
-            eval_distributed=eval_distributed,
-            num_workers=cfg.hyperparameters.get("num_workers", 0),
-            eval_batch_size=cfg.hyperparameters.get("eval_batch_size", cfg.hyperparameters.batch_size),
-        )
-        train_sampler = getattr(train_loader, "sampler", None)
-        val_sampler = getattr(val_loader, "sampler", None)
+    eval_distributed = False
 
-    criterion = GaussianLogLikelihoodLoss()
-    scheduler = BetaScheduler(
-        strategy=cfg.uncertainty.beta_strategy,
-        start_beta=cfg.uncertainty.beta_start,
-        end_beta=cfg.uncertainty.beta_end,
-        total_steps=cfg.uncertainty.get("total_steps", cfg.hyperparameters.epochs),
+    train_loader, val_loader, train_sampler, val_sampler = build_loaders(
+        cfg,
+        distributed=distributed,
+        rank=rank,
+        world_size=world_size,
+        eval_distributed=eval_distributed,
     )
-
     ddp_model = model.module if isinstance(model, DDP) else model
+    supports_gamma = bool(getattr(ddp_model, "supports_variance_trunk_scaling", False))
+    loss_type, criterion, scheduler, schedule_name, controller, faithful_trunk_detach = build_objective(
+        cfg, supports_gamma
+    )
     if hasattr(ddp_model, "get_1x_lr_params") and hasattr(ddp_model, "get_10x_lr_params"):
         params = [
             {"params": ddp_model.get_1x_lr_params(), "lr": cfg.hyperparameters.lr / 10},
@@ -142,6 +263,8 @@ def main(cfg: DictConfig) -> None:
 
     # --- 6. Training Loop ---
     global_step = 0
+    controller_epoch_history = []
+    track_controller_stats = cfg.dataset.name in {"toy_regression", "paper_sine"}
 
     for epoch in range(cfg.hyperparameters.epochs):
         model.train()
@@ -156,37 +279,40 @@ def main(cfg: DictConfig) -> None:
         else:
             train_accum = torch.zeros(5, device=device)
 
-        beta_start = cfg.uncertainty.beta_start
-        beta_end = cfg.uncertainty.beta_end
-        total_epochs = max(cfg.hyperparameters.epochs, 1)
-        if cfg.uncertainty.beta_strategy == "linear_decay":
-            if total_epochs == 1:
-                epoch_beta = beta_end
-            else:
-                progress = epoch / (total_epochs - 1)
-                epoch_beta = beta_start - progress * (beta_start - beta_end)
-        elif cfg.uncertainty.beta_strategy == "cosine":
-            if total_epochs == 1:
-                epoch_beta = beta_end
-            else:
-                epoch_beta = beta_end + 0.5 * (beta_start - beta_end) * (
-                    1.0 + math.cos((epoch / total_epochs) * math.pi)
-                )
+        if controller is not None:
+            schedule_value, variance_trunk_scale = controller.state()
         else:
-            epoch_beta = scheduler.get_beta(epoch)
+            schedule_value = scheduler.get_beta(epoch)
+            variance_trunk_scale = 0.0 if faithful_trunk_detach else 1.0
+
+        if loss_type == "faithful":
+            criterion.lambda_weight = schedule_value
+        else:
+            criterion.beta = schedule_value
+
         if rank == 0:
-            print(f"\n[Epoch {epoch}] Dynamic Beta update: {epoch_beta:.4f}")
+            print(f"\n[Epoch {epoch}] {schedule_name} update: {schedule_value:.4f}")
             if cfg.logging.use_wandb and wandb is not None:
-                wandb.log({"train/beta": epoch_beta, "epoch": epoch}, commit=False)
+                wandb.log(
+                    {
+                        f"train/{schedule_name}": schedule_value,
+                        "train/gamma_t": variance_trunk_scale,
+                        "epoch": epoch,
+                    },
+                    commit=False,
+                )
 
         iterator = tqdm(train_loader, desc=f"Epoch {epoch+1}/{cfg.hyperparameters.epochs}", leave=False) if rank == 0 else train_loader
         
         for batch in iterator:
             data, target = batch
             data, target = data.to(device), target.to(device)
-            criterion.beta = epoch_beta
 
-            mean, variance = model(data)
+            mean, variance = model(
+                data,
+                faithful=faithful_trunk_detach,
+                variance_trunk_scale=variance_trunk_scale,
+            )
             
             interpolate = cfg.dataset.name == "nyu_depth" or target.dim() == 4
             if cfg.dataset.name == "nyu_depth":
@@ -197,6 +323,9 @@ def main(cfg: DictConfig) -> None:
 
             optimizer.zero_grad()
             loss.backward()
+            batch_grad_norms = {}
+            if rank == 0 and cfg.logging.use_wandb and wandb is not None:
+                batch_grad_norms = grad_norms(ddp_model)
             optimizer.step()
             lr_scheduler.step()
 
@@ -236,7 +365,15 @@ def main(cfg: DictConfig) -> None:
                     train_accum += torch.stack([sse, abs_sum, nll_sum, count, loss.detach() * count])
 
             if rank == 0 and cfg.logging.use_wandb and wandb is not None:
-                wandb.log({"train/loss": loss.item(), "train/beta": epoch_beta}, step=global_step)
+                wandb.log(
+                    {
+                        "train/loss": loss.item(),
+                        "train/lr": lr_scheduler.get_last_lr()[0],
+                        f"train/{schedule_name}": schedule_value,
+                        **batch_grad_norms,
+                    },
+                    step=global_step,
+                )
 
             global_step += 1
 
@@ -281,6 +418,13 @@ def main(cfg: DictConfig) -> None:
         val_loss_count = torch.tensor(0.0, device=device)
         # [rmse_sum, abs_rel_sum, log10_sum, d1_sum, d2_sum, d3_sum, image_count]
         depth_accum = torch.zeros(7, device=device)
+        # [sse, abs_sum, nll_sum, count]
+        reg_accum = torch.zeros(4, device=device)
+        reg_stat_tensor = torch.zeros(11, device=device)
+        reg_sq_error_parts = []
+        reg_variance_parts = []
+        reg_true_variance_parts = []
+        probe_batch = None
 
         # Only Rank 0 runs the loop to allow TQDM and simple metrics logic
         # (Other ranks wait at the barrier below)
@@ -289,32 +433,41 @@ def main(cfg: DictConfig) -> None:
                 val_iter = tqdm(val_loader, desc="Val", leave=False)
                 for data, target in val_iter:
                     data, target = data.to(device), target.to(device)
+                    if (
+                        probe_batch is None
+                        and controller is not None
+                        and controller.uses_gradient_signal()
+                    ):
+                        probe_batch = (data.detach().clone(), target.detach().clone())
 
-                    # --- TTA: Enabled to match Reference Evaluate.py ---
-                    # Reference: evaluate.py lines 60-70
-                    image_flip = torch.flip(data, [3])
-                    
-                    if distributed:
-                        pred, var = model.module(data)
-                        pred_flip, var_flip = model.module(image_flip)
+                    if cfg.dataset.name == "nyu_depth":
+                        image_flip = torch.flip(data, [3])
+                        mean, variance = ddp_model(
+                            data,
+                            faithful=faithful_trunk_detach,
+                            variance_trunk_scale=variance_trunk_scale,
+                        )
+                        pred_flip, var_flip = ddp_model(
+                            image_flip,
+                            faithful=faithful_trunk_detach,
+                            variance_trunk_scale=variance_trunk_scale,
+                        )
+                        mean = 0.5 * (mean + torch.flip(pred_flip, [3]))
+                        variance = 0.5 * (variance + torch.flip(var_flip, [3]))
                     else:
-                        pred, var = model(data)
-                        pred_flip, var_flip = model(image_flip)
-
-                    # TTA Average
-                    mean = 0.5 * (pred + torch.flip(pred_flip, [3]))
-                    variance = 0.5 * (var + torch.flip(var_flip, [3]))
+                        mean, variance = ddp_model(
+                            data,
+                            faithful=faithful_trunk_detach,
+                            variance_trunk_scale=variance_trunk_scale,
+                        )
 
                     # Metric Calculation
                     interpolate = cfg.dataset.name == "nyu_depth" or target.dim() == 4
-                    mean_for_loss = mean
-                    if cfg.dataset.name == "nyu_depth":
-                        mean_for_loss = mean
                     if cfg.dataset.name == "nyu_depth":
                         min_d = cfg.dataset.get("min_depth_eval", cfg.dataset.get("min_depth", 1e-3))
                         mask = target > min_d
                         
-                        val_loss = criterion(mean_for_loss, target, variance=variance, interpolate=interpolate, mask=mask)
+                        val_loss = criterion(mean, target, variance=variance, interpolate=interpolate, mask=mask)
                         
                         valid_pixels = mask.sum().float()
                         val_loss_sum += val_loss.detach() * valid_pixels
@@ -344,11 +497,24 @@ def main(cfg: DictConfig) -> None:
                         depth_accum[5] += batch_metrics["delta3"] * batch_count
                         depth_accum[6] += batch_count
                     else:
-                        # Toy Dataset Logic
-                        val_loss = criterion(mean_for_loss, target, variance=variance, interpolate=interpolate)
-                        batch_count = target.numel()
+                        val_loss = criterion(mean, target, variance=variance, interpolate=interpolate)
+                        err = mean - target
+                        batch_count = err.new_tensor(float(err.numel()))
+                        reg_accum += torch.stack(
+                            [
+                                torch.sum(err**2),
+                                torch.sum(torch.abs(err)),
+                                torch.sum(-0.5 * ((err**2) / variance + torch.log(variance))),
+                                batch_count,
+                            ]
+                        )
                         val_loss_sum += val_loss.detach() * batch_count
                         val_loss_count += batch_count
+                        if track_controller_stats:
+                            reg_sq_error_parts.append((err.detach() ** 2).reshape(-1).cpu())
+                            reg_variance_parts.append(variance.detach().reshape(-1).cpu())
+                            if cfg.dataset.name == "paper_sine":
+                                reg_true_variance_parts.append((0.09 * (data.detach() ** 2 + 1.0)).reshape(-1).cpu())
 
         # =========================================================
         #   SYNC RESULTS BACK TO ALL RANKS
@@ -365,13 +531,78 @@ def main(cfg: DictConfig) -> None:
             # Broadcast metrics (optional, but good if you want to log on other ranks later)
             if cfg.dataset.name == "nyu_depth":
                 dist.broadcast(depth_accum, src=0)
+            else:
+                dist.broadcast(reg_accum, src=0)
+
+        if track_controller_stats and rank == 0 and reg_sq_error_parts:
+            toy_stats = compute_toy_epoch_statistics(
+                squared_error=torch.cat(reg_sq_error_parts),
+                variance=torch.cat(reg_variance_parts),
+                true_variance=torch.cat(reg_true_variance_parts) if reg_true_variance_parts else None,
+            )
+            reg_stat_tensor = torch.tensor(
+                [
+                    toy_stats["collapse_ratio"],
+                    toy_stats["align_score"],
+                    toy_stats["sigma2_min"],
+                    toy_stats["sigma2_median"],
+                    toy_stats["sigma2_max"],
+                    toy_stats.get("true_var_corr", 0.0),
+                    toy_stats.get("var_mse", 0.0),
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                ],
+                device=device,
+            )
+            if probe_batch is not None and controller is not None and controller.uses_gradient_signal():
+                probe_stats = gradient_probe_stats(ddp_model, probe_batch[0], probe_batch[1])
+                reg_stat_tensor[7] = probe_stats["mean_grad_norm"]
+                reg_stat_tensor[8] = probe_stats["var_grad_norm"]
+                reg_stat_tensor[9] = probe_stats["grad_ratio"]
+                reg_stat_tensor[10] = probe_stats["grad_cosine"]
+        if distributed and track_controller_stats:
+            dist.broadcast(reg_stat_tensor, src=0)
 
         # Compute Final Averages
-        val_loss_avg = (val_loss_sum / max(val_loss_count, 1.0)).item()
+        val_loss_avg = (val_loss_sum / torch.clamp(val_loss_count, min=1.0)).item()
 
         # Update Plateau Scheduler (on all ranks, since we synced loss)
-        if cfg.uncertainty.beta_strategy == "plateau":
+        if scheduler is not None and scheduler.strategy == "plateau":
             scheduler.get_beta(global_step, current_loss=val_loss_avg)
+
+        current_controller_state = None
+        if track_controller_stats:
+            toy_stats = {
+                "collapse_ratio": reg_stat_tensor[0].item(),
+                "align_score": reg_stat_tensor[1].item(),
+                "sigma2_min": reg_stat_tensor[2].item(),
+                "sigma2_median": reg_stat_tensor[3].item(),
+                "sigma2_max": reg_stat_tensor[4].item(),
+                "true_var_corr": reg_stat_tensor[5].item(),
+                "var_mse": reg_stat_tensor[6].item(),
+                "mean_grad_norm": reg_stat_tensor[7].item(),
+                "var_grad_norm": reg_stat_tensor[8].item(),
+                "grad_ratio": reg_stat_tensor[9].item(),
+                "grad_cosine": reg_stat_tensor[10].item(),
+            }
+            reg_vals = reg_accum.cpu().tolist()
+            total = max(reg_vals[3], 1.0)
+            toy_val_rmse = math.sqrt(reg_vals[0] / total)
+            if controller is not None:
+                current_controller_state = controller.observe(
+                    epoch=epoch,
+                    rmse_val=toy_val_rmse,
+                    collapse_ratio=toy_stats["collapse_ratio"],
+                    align_score=toy_stats["align_score"],
+                    grad_ratio=toy_stats["grad_ratio"],
+                    grad_cosine=toy_stats["grad_cosine"],
+                    mean_grad_norm=toy_stats["mean_grad_norm"],
+                    var_grad_norm=toy_stats["var_grad_norm"],
+                )
+            else:
+                current_controller_state = None
 
         # Logging (Rank 0 Only)
         if rank == 0:
@@ -388,10 +619,66 @@ def main(cfg: DictConfig) -> None:
                     "val/nll": val_loss_avg,
                 }
             else:
-                val_log = {"val/loss": val_loss_avg, "val/nll": val_loss_avg}
+                vals = reg_accum.cpu().tolist()
+                total = max(vals[3], 1.0)
+                val_log = {
+                    "val/loss": val_loss_avg,
+                    "val/rmse": math.sqrt(vals[0] / total),
+                    "val/mae": vals[1] / total,
+                    "val/nll": vals[2] / total,
+                }
             
             if cfg.logging.use_wandb and wandb is not None:
                 wandb.log(val_log, step=global_step)
+
+            if track_controller_stats:
+                logged_beta = current_controller_state.beta_t if current_controller_state else schedule_value
+                logged_gamma = current_controller_state.gamma_t if current_controller_state else variance_trunk_scale
+                logged_rmse_slope = current_controller_state.rmse_slope if current_controller_state else float("nan")
+                controller_event = current_controller_state.controller_event if current_controller_state else "hold"
+
+                toy_row = {
+                    "epoch": epoch + 1,
+                    "beta_t": logged_beta,
+                    "lambda_t": logged_beta if loss_type == "faithful" else None,
+                    "gamma_t": logged_gamma,
+                    "rmse_train": train_log["train/rmse"],
+                    "rmse_val": val_log["val/rmse"],
+                    "rmse_slope": logged_rmse_slope,
+                    "collapse_ratio": toy_stats["collapse_ratio"],
+                    "align_score": toy_stats["align_score"],
+                    "sigma2_min": toy_stats["sigma2_min"],
+                    "sigma2_median": toy_stats["sigma2_median"],
+                    "sigma2_max": toy_stats["sigma2_max"],
+                    "true_var_corr": toy_stats["true_var_corr"],
+                    "var_mse": toy_stats["var_mse"],
+                    "mean_grad_norm": toy_stats["mean_grad_norm"],
+                    "var_grad_norm": toy_stats["var_grad_norm"],
+                    "grad_ratio": toy_stats["grad_ratio"],
+                    "grad_cosine": toy_stats["grad_cosine"],
+                    "controller_event": controller_event,
+                }
+                controller_epoch_history.append(toy_row)
+                if cfg.logging.use_wandb and wandb is not None:
+                    wandb.log(
+                        {
+                            "controller/beta_t": logged_beta,
+                            "controller/gamma_t": logged_gamma,
+                            "controller/rmse_slope": logged_rmse_slope,
+                            "controller/collapse_ratio": toy_stats["collapse_ratio"],
+                            "controller/align_score": toy_stats["align_score"],
+                            "controller/sigma2_min": toy_stats["sigma2_min"],
+                            "controller/sigma2_median": toy_stats["sigma2_median"],
+                            "controller/sigma2_max": toy_stats["sigma2_max"],
+                            "controller/true_var_corr": toy_stats["true_var_corr"],
+                            "controller/var_mse": toy_stats["var_mse"],
+                            "controller/mean_grad_norm": toy_stats["mean_grad_norm"],
+                            "controller/var_grad_norm": toy_stats["var_grad_norm"],
+                            "controller/grad_ratio": toy_stats["grad_ratio"],
+                            "controller/grad_cosine": toy_stats["grad_cosine"],
+                        },
+                        step=global_step,
+                    )
 
             checkpoint_interval = cfg.hyperparameters.get("checkpoint_interval", 0)
             if checkpoint_interval and (epoch + 1) % checkpoint_interval == 0:
@@ -411,6 +698,24 @@ def main(cfg: DictConfig) -> None:
         state = model.module.state_dict() if distributed else model.state_dict()
         torch.save({"model": state}, ckpt_path)
         print(f"Saved checkpoint to {ckpt_path}")
+        if track_controller_stats:
+            artifact_prefix = "toy" if cfg.dataset.name == "toy_regression" else "paper_sine"
+            toy_summary = summarize_toy_history(controller_epoch_history, supports_gamma=supports_gamma)
+            save_toy_history_artifacts(run_dir, controller_epoch_history, toy_summary, prefix=artifact_prefix)
+            try:
+                plot_toy_history(run_dir, controller_epoch_history, prefix=artifact_prefix)
+                if cfg.dataset.name == "toy_regression":
+                    plot_toy_predictions(
+                        run_dir=run_dir,
+                        cfg=cfg,
+                        model=ddp_model,
+                        device=device,
+                        history=controller_epoch_history,
+                        faithful=faithful_trunk_detach,
+                        variance_trunk_scale=controller.state()[1] if controller is not None else variance_trunk_scale,
+                    )
+            except ImportError:
+                print("Skipping controller plots because matplotlib is not installed.")
 
     if distributed:
         dist.barrier()
